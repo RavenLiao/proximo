@@ -97,6 +97,11 @@ gh attestation verify oci://ghcr.io/john-broadway/proximo:latest --owner john-br
 "buildSignerURI": ".github/workflows/release.yml@refs/tags/v0.45.0"
 ```
 
+**0.45.0's image is the exception.** The release job's entrypoint smoke refused a working image
+(it grepped for 0.44's usage text), so the 0.45.0 image was built by hand from `main` through the
+same workflow's `workflow_dispatch`, on a commit whose `src/` is the v0.45.0 tag's. Its
+`buildSignerURI` reads `.github/workflows/release.yml@refs/heads/main`, not the tag.
+
 The image also ships an **SPDX SBOM** (`release.yml`, `sbom: true`). Inspect it on any
 Docker host with `docker buildx imagetools inspect ghcr.io/john-broadway/proximo:latest
 --format '{{ json .SBOM }}'` — verify the dependency tree against your own policy.

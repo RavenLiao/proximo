@@ -58,3 +58,19 @@ def test_the_stdio_door_hands_a_verb_to_the_shell_door(monkeypatch, capsys):
     monkeypatch.setattr(mcp, "build_server", lambda *a, **k: (_ for _ in ()).throw(AssertionError("built")))
     assert mcp.main(["mint", "pve"]) == 0
     assert seen["argv"] == ["mint", "pve"]
+
+
+def test_the_image_smoke_greps_for_what_the_door_prints(capsys):
+    """The GHCR release job runs `proximo --help` in the built image and greps its output; a
+    pattern the door no longer prints fails the build on a working image (0.45.0's first image
+    run, 2026-10-19: the grep still wanted 0.44's 'Proxmox MCP server'). Read the pattern from the
+    workflow itself, never a copy of it."""
+    import re  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    from proximo.core.doors.mcp import main  # noqa: PLC0415
+    wf = (Path(__file__).parents[1] / ".github" / "workflows" / "release.yml").read_text()
+    step = wf[wf.index("The entrypoint must actually run"):]
+    pattern = re.search(r"grep -q '([^']+)'", step).group(1)
+    assert main(["--help"]) == 0
+    assert pattern in capsys.readouterr().out, pattern

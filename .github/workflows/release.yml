@@ -114,7 +114,10 @@ jobs:
           set -euo pipefail
           out="$(docker run --rm proximo:smoke --help)"
           printf '%s\n' "$out"
-          printf '%s' "$out" | grep -q 'Proxmox MCP server' || {
+          # The door's own usage line. tests/test_entrypoint_help.py reads this pattern from here and
+          # asserts the door prints it, so the two cannot drift: 0.44's 'Proxmox MCP server' outlived
+          # the swap to the core and failed the 0.45.0 image build on a working image (2026-10-19).
+          printf '%s' "$out" | grep -q 'serve the MCP door over stdio' || {
             echo "::error::image entrypoint did not print the expected usage — the wheel may not import"
             exit 1
           }
