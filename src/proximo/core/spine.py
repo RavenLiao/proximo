@@ -55,6 +55,7 @@ import json
 import math
 import os
 import re
+import ssl
 import stat
 import tempfile
 import time
@@ -62,6 +63,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import unquote
+
+from proximo.core.tls import PinMismatch
 
 # ---- env names, one place ---------------------------------------------------------------------
 TRIP_ENV = "PROXIMO_CONTAIN_TRIP_PATH"
@@ -140,13 +143,76 @@ def wire_error(exc: BaseException) -> dict[str, Any]:
     (a site on 0.44, 2026-09-29). The number is no locator and no secret; the message is neither
     kept nor needed (it carries the request URL). Total: a `response` that raises, or a status
     that is not an int (a bool is not; an IntEnum is), leaves the type alone. Every ledger row
-    that names an error builds it here, so no site records less than another (lens 2026-09-30)."""
+    that names an error builds it here, so no site records less than another (lens 2026-09-30).
+
+    A TLS failure is the one case the type cannot carry: a wrong pin, an untrusted CA and a dead
+    port all read "ConnectError" (issue #90, 2026-10-18: a pin PVE broke by renewing a node cert
+    cost a session with openssl). So the certificate error under the transport's is named too,
+    with what it holds that is neither a locator nor a secret: a pin mismatch's two fingerprints,
+    and a verify failure's OpenSSL code with OpenSSL's own reason for it, read from a table here and
+    never from the exception (Python appends the dialed target to the hostname, email and IP
+    mismatch messages, and a message is text anyone could have built). A code the table does not
+    know keeps the code alone. Total over what it is handed (lens 2026-10-19)."""
     try:
         status = exc.response.status_code  # type: ignore[attr-defined]
         status = None if isinstance(status, bool) or not isinstance(status, int) else int(status)
     except Exception:  # noqa: BLE001 -- no response, one that will not say, or a number that will not
         status = None
-    return {"error": type(exc).__name__, **({"status": status} if status is not None else {})}
+    return {"error": type(exc).__name__, **({"status": status} if status is not None else {}), **_tls_cause(exc)}
+
+
+_STATIC_REASONS = {   # OpenSSL's own X509_verify_cert_error_string, read from libcrypto 3.5
+    2: 'unable to get issuer certificate',
+    7: 'certificate signature failure',
+    9: 'certificate is not yet valid',
+    10: 'certificate has expired',
+    18: 'self-signed certificate',
+    19: 'self-signed certificate in certificate chain',
+    20: 'unable to get local issuer certificate',
+    21: 'unable to verify the first certificate',
+    24: "issuer certificate doesn't have a public key",
+    26: 'unsuitable certificate purpose',
+    27: 'certificate not trusted',
+    28: 'certificate rejected',
+    32: 'key usage does not include certificate signing',
+    79: 'invalid CA certificate',
+    80: 'Path length invalid for non-CA cert',
+    81: 'Path length given without key usage keyCertSign',
+    82: 'Key usage keyCertSign invalid for non-CA cert',
+    83: 'Issuer name empty',
+    84: 'Subject name empty',
+    85: 'Missing Authority Key Identifier',
+    86: 'Missing Subject Key Identifier',
+    87: 'Empty Subject Alternative Name extension',
+    88: 'Subject empty and Subject Alt Name extension not critical',
+    89: 'Basic Constraints of CA cert not marked critical',
+    90: 'Authority Key Identifier marked critical',
+    91: 'Subject Key Identifier marked critical',
+    92: 'CA cert does not include key usage extension',
+    93: 'Using cert extension requires at least X509v3',
+    94: 'Certificate public key has explicit ECC parameters',
+}
+
+
+def _tls_cause(exc: BaseException) -> dict[str, Any]:
+    """The certificate error in `exc`'s chain (httpx wraps httpcore wraps ssl), bounded and
+    cycle-safe; nothing when there is none, or when reading it raises."""
+    seen: set[int] = set()
+    node: BaseException | None = exc
+    try:
+        while node is not None and id(node) not in seen and len(seen) < 16:
+            seen.add(id(node))
+            if isinstance(node, PinMismatch):
+                return {"tls": "pin mismatch", "pinned": str(node.pinned), "observed": node.observed}
+            if isinstance(node, ssl.SSLCertVerificationError):
+                code = getattr(node, "verify_code", None)
+                code = code if isinstance(code, int) and not isinstance(code, bool) else None
+                return {"tls": "certificate not verified", **({"verify_code": code} if code is not None else {}),
+                        **({"verify_message": _STATIC_REASONS[code]} if code in _STATIC_REASONS else {})}
+            node = node.__cause__ or node.__context__
+    except Exception:  # noqa: BLE001, S110 -- a row is written whatever the error is made of
+        pass
+    return {}
 
 
 @dataclass(frozen=True)

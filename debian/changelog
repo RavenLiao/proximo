@@ -1,3 +1,16 @@
+proximo (0.45.1-1) UNRELEASED; urgency=medium
+
+  * Track upstream 0.45.1 (patch: a TLS failure names itself. Issue #90: a
+    fingerprint pin broke when Proxmox renewed a node certificate and the
+    doctor said only ConnectError. The doctor and every audit row now carry a
+    pin mismatch's two fingerprints, or OpenSSL's reason for a verify failure
+    from a static table. New opt-in tls_strict = false / PROXIMO_TLS_STRICT
+    clears only Python 3.13's VERIFY_X509_STRICT on a CA bundle so Proxmox's
+    own cluster CA can be trusted; chain and hostname/IP stay verified.
+    Dependabot base-image and actions bumps folded.)
+
+ -- John Broadway <271895126+john-broadway@users.noreply.github.com>  Mon, 19 Oct 2026 08:50:00 +0000
+
 proximo (0.45.0-1) UNRELEASED; urgency=medium
 
   * Track upstream 0.45.0 (minor: Proximo is the core. The 924 named wrappers

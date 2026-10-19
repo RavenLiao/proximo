@@ -25,6 +25,7 @@ node       = "pve"
 token_path = "/etc/proximo/home-pve.token"   # file holds: USER@REALM!TOKENID=SECRET
 verify_tls = true
 ca_bundle  = "/etc/proximo/home-pve-ca.pem"   # preferred over disabling TLS verify
+# tls_strict = false   # with the cluster CA as ca_bundle: relaxes ONLY its X509 strictness (PVE's root has no keyUsage)
 ssh_target = "pve"                            # exec half; "local" if Proximo runs ON the host
 # arm_source      = "/etc/proximo/home-pve.operator-token"   # THIS box's write token (armgate)
 # readonly_source = "/etc/proximo/home-pve.token.readonly"   # its read-only counterpart

@@ -116,16 +116,15 @@ def _planes(lcfg: Any, flags: list[str]) -> tuple[dict[str, Any], bool, bool]:
         configured = True
         state = arm.arm_state(cfg)
         section: dict[str, Any] = {"configured": True, "base_url": cfg.base_url, "verify_tls": cfg.verify_tls,
-                                   "fingerprint_pinned": bool(cfg.fingerprint),
+                                   "fingerprint_pinned": bool(cfg.fingerprint), "tls_strict": cfg.tls_strict,
+                                   **({"credential_file": cfg.credential} if product == "pmg" else {}),
                                    "arm": {"enforced": state.enforced, "armed": state.armed, "reason": state.reason}}
-        if product == "pmg":
-            section["credential_file"] = cfg.credential
+        flags += [f"{product}: tls_strict=false relaxes its CA bundle's X509 checks"] if not cfg.tls_strict else []
         reach: dict[str, Any] = {}
         version = _read(product, "/version", cfg, lcfg)
         if "error" in version:
             reach["version"] = version
-            flags.append(f"{product}: no reach: GET /version failed ({version['error']}); check the base URL, the "
-                         f"credential file and TLS (a pin or a CA bundle)")
+            flags.append(f"{product}: no reach: GET /version failed ({version['error']}); {_reach_hint(version)}")
             unreachable = True
         else:
             reach["version"] = version["data"].get("version")
@@ -144,6 +143,12 @@ def _planes(lcfg: Any, flags: list[str]) -> tuple[dict[str, Any], bool, bool]:
         section["reach"] = reach
         out[product] = section
     return out, configured, unreachable
+
+
+def _reach_hint(v: dict[str, Any]) -> str:  # a TLS failure names itself (spine.wire_error, issue #90)
+    if v.get("tls") == "pin mismatch":  # Proxmox renews node certs on its own; the new one is the re-pin
+        return f"TLS pin mismatch: the server presents {v.get('observed')}, the pin says {v.get('pinned')}: re-pin"
+    return f"TLS: {v.get('verify_message') or v.get('verify_code')}" if v.get("tls") else "check base URL, token, TLS"
 
 
 def _read(product: str, path: str, cfg: wire.Plane, lcfg: Any) -> dict[str, Any]:

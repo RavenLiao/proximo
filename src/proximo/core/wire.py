@@ -68,6 +68,7 @@ class Plane:
     verify_tls: bool = True
     ca_bundle: str | None = None
     fingerprint: str | None = None  # WIRE-ENFORCED exact-cert SHA-256 pin
+    tls_strict: bool = True         # False relaxes ONLY a CA bundle's X509 strictness (PVE's root, #90)
     arm_source: str | None = None
     readonly_source: str | None = None
     # The per-target ENVELOPE, carried on the Plane so the core never reads a registry: a
@@ -109,6 +110,7 @@ class Plane:
             verify_tls=parse_verify_tls(os.environ.get(f"{p}VERIFY_TLS", "true")),
             ca_bundle=os.environ.get(f"{p}CA_BUNDLE") or None,
             fingerprint=os.environ.get(f"{p}FINGERPRINT") or None,
+            tls_strict=parse_verify_tls(os.environ.get(f"{p}TLS_STRICT", "true")),
             # EACH PLANE ITS OWN PAIR. pve keeps PROXIMO_ARM_SOURCE; pbs and pdm read
             # PROXIMO_PBS_ARM_SOURCE / PROXIMO_PDM_ARM_SOURCE (and _READONLY_SOURCE), because
             # their token file carries its identity and a swap really changes who is asking.
@@ -212,6 +214,7 @@ def plane_from_target(product: str, name: str, fields: dict[str, Any]) -> Plane:
         verify_tls=parse_verify_tls(str(fields.get("verify_tls", "true"))),
         ca_bundle=fields.get("ca_bundle") or None,
         fingerprint=fields.get("fingerprint") or None,
+        tls_strict=parse_verify_tls(str(fields.get("tls_strict", "true"))),
         arm_source=fields.get("arm_source") or None,
         readonly_source=fields.get("readonly_source") or None,
         name=name,
@@ -333,6 +336,12 @@ class Client:
 
 def _verify(cfg: Plane) -> Any:
     """The TLS decision, fail-closed. A pin beats a bundle beats the system store; NOTHING is refused."""
+    if not cfg.tls_strict and (cfg.fingerprint or not cfg.ca_bundle):
+        # The relaxation is for a CA bundle and nothing else: a pin replaces chain checks and the
+        # system store is no internal CA. Said here, never ignored, so nobody believes it applied.
+        p = "PROXIMO_" + _spec(cfg.product)["prefix"]
+        raise ProximoError(f"{p}TLS_STRICT=false (tls_strict) relaxes a CA bundle's X509 strictness and nothing "
+                           f"else: set {p}CA_BUNDLE to the CA and no {p}FINGERPRINT, or unset it")
     if cfg.fingerprint:
         # WIRE-ENFORCED pin: exact-cert SHA-256 replaces CA/hostname validation, checked before
         # the credential is sent. A garbled pin refuses loudly here, never degrades into "no pin".
@@ -349,7 +358,7 @@ def _verify(cfg: Plane) -> Any:
             f"{p}CA_BUNDLE to its CA, or {p}VERIFY_TLS=true. A read-only token is still a "
             f"credential -- it must not cross an unverified channel."
         )
-    return httpx_verify(verify)
+    return httpx_verify(verify, strict=cfg.tls_strict) if isinstance(verify, str) else verify
 
 
 def client(product: str, cfg: Plane | None = None) -> Client:

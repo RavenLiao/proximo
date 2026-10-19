@@ -94,13 +94,8 @@ gh attestation verify oci://ghcr.io/john-broadway/proximo:latest --owner john-br
 // the attestation ties the image to the real repo + release workflow:
 "predicateType": "https://slsa.dev/provenance/v1"
 "sourceRepositoryURI": "https://github.com/john-broadway/proximo"
-"buildSignerURI": ".github/workflows/release.yml@refs/tags/v0.45.0"
+"buildSignerURI": ".github/workflows/release.yml@refs/tags/v0.45.1"
 ```
-
-**0.45.0's image is the exception.** The release job's entrypoint smoke refused a working image
-(it grepped for 0.44's usage text), so the 0.45.0 image was built by hand from `main` through the
-same workflow's `workflow_dispatch`, on a commit whose `src/` is the v0.45.0 tag's. Its
-`buildSignerURI` reads `.github/workflows/release.yml@refs/heads/main`, not the tag.
 
 The image also ships an **SPDX SBOM** (`release.yml`, `sbom: true`). Inspect it on any
 Docker host with `docker buildx imagetools inspect ghcr.io/john-broadway/proximo:latest
@@ -113,7 +108,7 @@ in the release path to steal. Each artifact has an attached provenance attestati
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' \
-  https://pypi.org/integrity/proximo-proxmox/0.45.0/proximo_proxmox-0.45.0-py3-none-any.whl/provenance
+  https://pypi.org/integrity/proximo-proxmox/0.45.1/proximo_proxmox-0.45.1-py3-none-any.whl/provenance
 # => 200   (the signed provenance PyPI generated at publish time)
 ```
 

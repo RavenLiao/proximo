@@ -15,10 +15,10 @@ from typing import overload
 
 
 @overload
-def httpx_verify(value: bool) -> bool: ...
+def httpx_verify(value: bool, *, strict: bool = True) -> bool: ...
 @overload
-def httpx_verify(value: str) -> ssl.SSLContext: ...
-def httpx_verify(value: bool | str) -> bool | ssl.SSLContext:
+def httpx_verify(value: str, *, strict: bool = True) -> ssl.SSLContext: ...
+def httpx_verify(value: bool | str, *, strict: bool = True) -> bool | ssl.SSLContext:
     """Translate a verify setting into an httpx ``verify=`` value without the deprecated str form.
 
     - ``bool`` (True/False): passed through unchanged.
@@ -40,13 +40,19 @@ def httpx_verify(value: bool | str) -> bool | ssl.SSLContext:
     strict-verifying stack rejects that CA outright ("CA cert does not include key
     usage extension") whatever this flag says.
 
-    ``VERIFY_X509_STRICT`` is deliberately left alone. Adding it would break CA pins
-    on 3.12, and clearing it on 3.13 would quietly relax conformance checking the
-    operator never asked us to relax.
+    ``VERIFY_X509_STRICT`` is left as the interpreter sets it: adding it would break CA
+    pins on 3.12, and clearing it on 3.13 unasked would quietly relax conformance checking.
+    ``strict=False`` is the operator ASKING (``tls_strict = false``, issue #90): a stock PVE
+    root fails 3.13's strict checks on its missing ``keyUsage``, and trusting it is the one
+    durable answer to leaf pins that break each time Proxmox renews a node's certificate. It
+    clears that one flag and nothing else: the chain is still built to this file and the
+    hostname or IP is still matched.
     """
     if isinstance(value, str):
         ctx = ssl.create_default_context(cafile=value)
         ctx.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+        if not strict:
+            ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
         return ctx
     return value
 
@@ -71,6 +77,21 @@ def normalize_fingerprint(value: str) -> str:
     return fp
 
 
+class PinMismatch(ssl.SSLCertVerificationError):
+    """The server presented a certificate other than the pinned one. `pinned` and `observed` are
+    SHA-256 hashes of a certificate the server shows to anyone who connects: no secret, no
+    locator. They ride the error so a receipt and the doctor can say which cert came back, the
+    one fact that turns a "ConnectError" into a re-pin (issue #90, 2026-10-18: PVE renewed a node
+    cert on its own and the pin broke silently)."""
+
+    def __init__(self, pinned: str, observed: str | None) -> None:
+        super().__init__(
+            f"server certificate fingerprint mismatch: pinned {pinned}, "
+            f"observed {observed or 'no certificate'} — refusing before any request (token never sent)"
+        )
+        self.pinned, self.observed = pinned, observed
+
+
 class _FingerprintPinnedContext(ssl.SSLContext):
     """An SSLContext that accepts exactly ONE server certificate: the pinned SHA-256.
 
@@ -90,11 +111,7 @@ class _FingerprintPinnedContext(ssl.SSLContext):
             der = ssock.getpeercert(binary_form=True)
             observed = hashlib.sha256(der).hexdigest() if der else None
             if observed != self._pin:
-                raise ssl.SSLCertVerificationError(
-                    f"server certificate fingerprint mismatch: pinned {self._pin}, "
-                    f"observed {observed or 'no certificate'} — refusing before any "
-                    "request (token never sent)"
-                )
+                raise PinMismatch(self._pin, observed)
         except BaseException:
             ssock.close()
             raise
