@@ -30,6 +30,7 @@ from proximo.core.doors import mcp as door
 from proximo.core.errors import ProximoError
 from proximo.core.ledger import in_flight
 from proximo.core.ledger import parse_lines as undo_parse
+from test_tiers_harvest import HARVESTED, bj  # the records are built, with their checks, by the build
 
 LXC_PATH = "/nodes/pve1/lxc/1201/config"
 QEMU_PATH = "/nodes/pve1/qemu/101/config"
@@ -348,13 +349,13 @@ def test_an_unarmed_restore_is_refused_at_arm_and_nothing_is_written(box, monkey
     assert w.mutations() == [] and _rows()[-1]["detail"]["needs"] == "arm"
 
 
-def test_an_untiered_write_refuses_the_restore(box, monkeypatch):
+def test_an_untiered_write_refuses_the_restore(box, monkeypatch, records):
     # Since 2026-10-04 the record leaves no published mutation unjudged, so the control strips
     # the family line that opens /cluster/options: the restore's twin resolves with no sentence.
-    real = engine._tiers()
+    real = bj.tiers(HARVESTED.read_text())
     stripped = {**real, "family": {k: v for k, v in real["family"].items() if k != "pve:/cluster/options"}}
-    monkeypatch.setattr(engine, "_tiers", lambda: stripped)
-    engine.table.cache_clear()
+    monkeypatch.setattr(bj, "tiers", lambda _text: stripped)
+    records()
     try:
         assert engine.resolve("pve", "PUT", "/cluster/options").tier is None
         _wire(monkeypatch, {"keyboard": "en-us", "console": "html5"})
@@ -806,9 +807,9 @@ def _capture_rows():
 
 
 def test_the_create_record_names_five_addresses_each_with_the_read_and_the_delete_at_its_path():
-    creates = engine._creates()
-    assert len(creates) == EXACT_CREATES, sorted(creates)
     t = engine.table()
+    creates = {r.key: r.creates for r in t.values() if r.creates}
+    assert len(creates) == EXACT_CREATES, sorted(creates)
     for key, why in creates.items():
         product, _, address = key.partition(":")
         method, _, path = address.partition(" ")
@@ -820,8 +821,13 @@ def test_the_create_record_names_five_addresses_each_with_the_read_and_the_delet
             # the twins are called with the path alone (the capture's read, the restore's delete)
             assert not [k for k, v in twin.params.items()
                         if not v.get("optional") and k not in engine.placeholders(path)], (key, m)
-        assert len(why.split()) >= 4 and engine.is_create(row), key
-    assert not engine.is_create(engine.resolve("pve", "POST", "/cluster/firewall/groups/{group}"))
+        assert len(why.split()) >= 4 and row.creates, key
+    assert not engine.resolve("pve", "POST", "/cluster/firewall/groups/{group}").creates
+
+
+def _dicts():
+    """The table as the build sees it: one dict per row, before any Row exists."""
+    return {k: vars(r) for k, r in engine.table().items()}
 
 
 @pytest.mark.parametrize("body,match", [
@@ -841,7 +847,7 @@ def test_a_create_line_that_cannot_deliver_its_undo_refuses_the_record_at_load(b
     must exist to read the record back and its DELETE must exist to put absence back. A line that
     cannot is a lie the file tells its reader, refused whole (the tier record's own rule)."""
     with pytest.raises(ProximoError, match=match):
-        engine._parse_creates(body)
+        bj.creates(body.decode(), _dicts())
 
 
 @pytest.mark.parametrize("status", [404, 500])
@@ -873,10 +879,10 @@ def test_the_control_an_unlisted_post_at_an_item_path_with_the_same_failing_read
 
 
 def test_the_control_without_its_line_the_token_create_is_refused_again(box, monkeypatch):
-    monkeypatch.setattr(engine, "_creates", lambda: {})
+    row = engine.Row(**{**_tiered(*TOKEN_ROW).__dict__, "creates": None})   # the row without its line
     w = _create_wire(monkeypatch, _status_error(404), answer=MINTED)
     with pytest.raises(ProximoError, match="undo unavailable"):
-        engine.execute(_tiered(*TOKEN_ROW), {}, cfg=box, path=TOKEN_PATH)
+        engine.execute(row, {}, cfg=box, path=TOKEN_PATH)
     assert w.mutations() == []
 
 
@@ -1006,18 +1012,16 @@ def test_two_creates_at_one_path_interleaved_pair_each_with_its_own_landing(box,
 
 
 @pytest.mark.parametrize("twin", ["GET", "DELETE"])
-def test_a_create_line_whose_twin_requires_an_argument_beyond_the_path_is_refused(monkeypatch, twin):
+def test_a_create_line_whose_twin_requires_an_argument_beyond_the_path_is_refused(twin):
     """No published twin of the five asks for one today; the control plants a required `foo` on the
     token's twin and the loader must refuse the line, since UNDO calls the twin with the path alone."""
-    real = engine.table()
+    real = _dicts()
     key = ("pve", twin, "/access/users/{userid}/token/{tokenid}")
-    planted = engine.Row(**{**real[key].__dict__, "params": {**real[key].params, "foo": {"type": "string"}}})
-    monkeypatch.setattr(engine, "table", lambda: {**real, key: planted})
-    body = b'[create]\n"pve:POST /access/users/{userid}/token/{tokenid}" = { why = "a create whose twin now asks" }'
+    planted = {**real[key], "params": {**real[key]["params"], "foo": {"type": "string"}}}
+    body = '[create]\n"pve:POST /access/users/{userid}/token/{tokenid}" = { why = "a create whose twin now asks" }'
     with pytest.raises(ProximoError, match=f"{twin} .* requires foo"):
-        engine._parse_creates(body)
-    monkeypatch.undo()
-    assert "pve:POST /access/users/{userid}/token/{tokenid}" in engine._parse_creates(body)   # the real twin: fine
+        bj.creates(body, {**real, key: planted})
+    assert "pve:POST /access/users/{userid}/token/{tokenid}" in bj.creates(body, real)   # the real twin: fine
 
 
 CREATES = [

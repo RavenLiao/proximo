@@ -17,6 +17,7 @@ import pytest
 
 from proximo.core import engine
 from proximo.core.errors import ProximoError
+from test_tiers_harvest import HARVESTED, bj  # one loader for the record, the build's
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -37,7 +38,7 @@ def _mutations():
     version filtered `not r.gate` and would have let an untiered agent mutation through)."""
     return [r for r in engine.table().values()
             if not r.excluded and r.access == engine.MUTATE
-            and (not r.gate or engine.opt_in_lane(r) is not None)]
+            and (not r.gate or r.lane is not None)]
 
 
 def test_every_published_mutation_is_tiered_or_held():
@@ -49,7 +50,7 @@ def test_every_published_mutation_is_tiered_or_held():
 def test_the_held_record_is_exact_and_names_only_live_mutations():
     held = [r for r in _mutations() if r.held]
     assert len(held) == EXACT_HELD, f"{len(held)} held, the pin says {EXACT_HELD}"
-    assert len(engine._tiers()["held"]) == EXACT_HELD      # every held line reached a row
+    assert len(bj.tiers(HARVESTED.read_text())["held"]) == EXACT_HELD      # every held line reached a row
     for r in held:
         assert r.tier is None and r.why is None, f"{r.key} is held AND tiered"
         assert len(r.held.split()) >= 4 and r.held[-1] not in ",(", r.key
@@ -68,19 +69,16 @@ def test_a_held_address_is_refused_before_arm_with_its_own_sentence(armed):
     assert row.held and row.held in v.reason
 
 
-def test_the_control_without_its_held_line_the_address_reads_as_unjudged(armed, monkeypatch):
+def test_the_control_without_its_held_line_the_address_reads_as_unjudged(armed, monkeypatch, records):
     """The held line is load-bearing: drop it and the same address is refused for a DIFFERENT
     reason (no tier), which a tier line would then open. The hold is the judgement."""
-    real = engine._tiers()
+    real = bj.tiers(HARVESTED.read_text())
     stripped = {**real, "held": {k: v for k, v in real["held"].items()
                                   if k != "pve:POST /nodes/{node}/execute"}}
-    monkeypatch.setattr(engine, "_tiers", lambda: stripped)
-    engine.table.cache_clear()
-    try:
-        v = engine.govern(engine.resolve("pve", "POST", "/nodes/{node}/execute"))
-        assert not v.allowed and v.needs == "tier"
-    finally:
-        engine.table.cache_clear()
+    monkeypatch.setattr(bj, "tiers", lambda _text: stripped)
+    records()
+    v = engine.govern(engine.resolve("pve", "POST", "/nodes/{node}/execute"))
+    assert not v.allowed and v.needs == "tier"
 
 
 @pytest.mark.parametrize("product,method,path,family", [
@@ -89,33 +87,18 @@ def test_the_control_without_its_held_line_the_address_reads_as_unjudged(armed, 
     ("pdm", "PUT", "/nodes/{node}/dns", "pdm:/nodes/dns"),
 ])
 def test_a_family_line_authored_today_opens_its_address_and_its_removal_refuses_it(
-        armed, monkeypatch, product, method, path, family):
+        armed, monkeypatch, records, product, method, path, family):
     """2026-10-04's lines, planted: the address passes the tier gate with the line and is refused
     `needs=tier` without it. Later pillars may still refuse; the tier gate is what this proves."""
     row = engine.resolve(product, method, path)
     assert row.tier in engine.TIERS and row.why
     assert engine.govern(row).needs != "tier"
-    real = engine._tiers()
+    real = bj.tiers(HARVESTED.read_text())
     stripped = {**real, "family": {k: v for k, v in real["family"].items() if k != family}}
-    monkeypatch.setattr(engine, "_tiers", lambda: stripped)
-    engine.table.cache_clear()
-    try:
-        v = engine.govern(engine.resolve(product, method, path))
-        assert not v.allowed and v.needs == "tier", v
-    finally:
-        engine.table.cache_clear()
-
-
-def _record(monkeypatch, body: str):
-    class _File:
-        def joinpath(self, _name):
-            return self
-
-        def read_bytes(self):
-            return body.encode()
-
-    monkeypatch.setattr(engine.resources, "files", lambda _pkg: _File())
-    engine._tiers.cache_clear()
+    monkeypatch.setattr(bj, "tiers", lambda _text: stripped)
+    records()
+    v = engine.govern(engine.resolve(product, method, path))
+    assert not v.allowed and v.needs == "tier", v
 
 
 @pytest.mark.parametrize("body,match", [
@@ -127,25 +110,17 @@ def _record(monkeypatch, body: str):
     ('[tier.held]\n"pve:POST /nodes/{node}/execute" = { why = "   " }\n', "without a why"),
     ('[tier.held]\n"pve:POST /nodes/{node}/execute" = "destructive"\n', "without a why"),
 ])
-def test_a_held_line_that_is_ambiguous_or_blank_refuses_the_record(monkeypatch, body, match):
-    _record(monkeypatch, body)
-    try:
-        with pytest.raises(ProximoError, match=match):
-            engine._tiers()
-    finally:
-        engine._tiers.cache_clear()
+def test_a_held_line_that_is_ambiguous_or_blank_refuses_the_record(records, body, match):
+    with pytest.raises(ProximoError, match=match):
+        records(**{"tiers.toml": body})
 
 
-def test_a_held_line_for_an_address_the_door_never_serves_is_refused_at_load(monkeypatch):
-    real = engine._tiers()
+def test_a_held_line_for_an_address_the_door_never_serves_is_refused_at_load(monkeypatch, records):
+    real = bj.tiers(HARVESTED.read_text())
     bogus = {**real, "held": {**real["held"], "pve:GET /version": "a held read, which the gate never reads"}}
-    monkeypatch.setattr(engine, "_tiers", lambda: bogus)
-    engine.table.cache_clear()
-    try:
-        with pytest.raises(ProximoError, match="pve:GET /version"):
-            engine.table()
-    finally:
-        engine.table.cache_clear()
+    monkeypatch.setattr(bj, "tiers", lambda _text: bogus)
+    with pytest.raises(ProximoError, match="pve:GET /version"):
+        records()
 
 
 def test_a_plan_of_a_held_address_reads_no_live_state(armed):
@@ -169,11 +144,11 @@ def test_a_token_mint_answers_its_secret_once_labelled_as_a_credential(product, 
     own line governs the answer: served whole to the caller who asked, labelled, and `ledgered`
     fingerprints the whole answer so no receipt ever holds it."""
     row = engine.resolve(product, method, path)
-    assert engine.secret_key(row) == row.key
+    assert row.secret[4]            # the own line's bearer rides on the row
     out = engine._envelope(row, row.path, {"id": "t", field: "SECRET-VALUE-1"})
     assert out["data"][field] == "SECRET-VALUE-1" and out["bearer_credential"]
     assert "SECRET-VALUE-1" not in repr(engine.ledgered({"id": "t", field: "SECRET-VALUE-1"},
-                                                          rule=engine.secret_rule(row)))
+                                                          rule=row.secret))
 
 
 def test_a_create_that_mints_and_echoes_serves_the_mint_and_withholds_the_echo():
@@ -188,9 +163,9 @@ def test_a_create_that_mints_and_echoes_serves_the_mint_and_withholds_the_echo()
 
 def test_the_control_a_mutation_without_its_own_line_answers_by_its_read_twin():
     """`PUT /config/notes` has no line of its own and no read line: the answer passes whole, and
-    the key the engine consulted is the read twin's."""
+    the row carries the read twin's rule, which is no rule."""
     row = engine.resolve("pdm", "PUT", "/config/notes")
-    assert engine.secret_key(row) == "pdm:GET /config/notes"
+    assert row.secret == engine._NO_RULE == engine.resolve("pdm", "GET", "/config/notes").secret
     assert engine._envelope(row, row.path, {"notes": "hello"})["data"] == {"notes": "hello"}
 
 

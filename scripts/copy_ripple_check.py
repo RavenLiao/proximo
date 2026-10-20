@@ -12,6 +12,8 @@ The rules, mechanically:
   - Every TOTAL tool-count claim agrees with the canonical count (the LobeHub
     manifest's tools array). Scoped-registration *examples* ("that pair = 194
     tools") are exempt by their context markers.
+  - Every "N trust controls" claim (README, and each satellite, HTML tiles included)
+    equals the rows of SECURITY.md's control table.
   - The tagline phrase "hand the keys" survives on every metadata surface
     (pyproject / server.json / lhm.plugin.json descriptions).
 
@@ -23,6 +25,7 @@ Consumed by tests/test_copy_ripple.py (always-on) and the release ripple. Stdlib
 """
 from __future__ import annotations
 
+import html
 import json
 import re
 import sys
@@ -54,6 +57,25 @@ _EXAMPLE_MARKERS = ("PROXIMO_SURFACES", "pair =")
 # ("127.0.0.1") is an address, not a version — the lookarounds keep both out.
 VERSION_LITERAL_DOCS = ("VERIFY.md", "SECURITY.md", "docs/THREAT_MODEL.md")
 _SEMVER_LITERAL_RE = re.compile(r"(?<![\w.])v?(\d+\.\d+\.\d+)(?!\.\d)")
+# The control count: SECURITY.md's "| Control | Defends against |" table is the one list of
+# controls, and every "N trust controls" claim counts its rows. The site's tile said 13 for a
+# release after 0.45 retired LEASE and SCOPE, dropped MIRROR, split ENVELOPE and added TIER (12),
+# because this gate pinned versions and tool counts only (2026-10-19). A claim is read from the
+# text a reader sees: comments dropped, entities decoded, tags stripped to nothing (`1<b>3</b>`
+# is 13; the tile `<div class="num">12</div><div class="label">trust controls</div>` is
+# "12trust controls"), emphasis and hyphens gone; the number before or after the label, in
+# digits or words to ninety-nine (the lens on this rule, 2026-10-19, read thirteen spellings
+# of a stale 13 as clean).
+_CONTROL_TABLE_HEAD = "| Control | Defends against |"
+_UNITS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+          "fifteen sixteen seventeen eighteen nineteen").split()
+_TENS = {w: 10 * i for i, w in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split(), 2)}
+_WORDS = rf"(?:(?:{'|'.join(_TENS)})(?: (?:{'|'.join(_UNITS[1:10])}))?|{'|'.join(_UNITS)})"
+_LABEL = r"(?:trust|security) controls?"
+_CONTROL_CLAIM_RE = re.compile(  # "12 trust controls" | "trust controls: 12" (a year after the label is not one)
+    rf"(?<![\w])(\d[\d,]*|{_WORDS})\+? ?{_LABEL}\b|\b{_LABEL} ?:? ?(\d{{1,3}}|{_WORDS})(?![\w,])", re.I)
+_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+_TAG_RE = re.compile(r"<[^>]+>")
 # The install badge: "> 📦 **`0.39.1`**: on [PyPI](...), [GitHub](.../tag/v0.39.1), ...".
 # Matched as a whole LINE so every version literal on it is checked, backticks and tag URL both.
 _INSTALL_BADGE_RE = re.compile(r"(?m)^> 📦 \*\*`\d+\.\d+\.\d+[^`]*`\*\*.*$")
@@ -164,10 +186,59 @@ def check_tagline(files: dict[str, str]) -> list[str]:
     ]
 
 
+def canonical_control_count(security: str) -> int | None:
+    """The rows of SECURITY.md's control table, or None when there is no such table (or no row)."""
+    lines = security.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith(_CONTROL_TABLE_HEAD):
+            rows = 0
+            for row in lines[i + 2:]:  # past the |---| separator
+                if not row.startswith("|"):
+                    break
+                rows += 1
+            return rows or None
+    return None
+
+
+def _reader_text(text: str) -> str:
+    """The words a reader sees, for a count claim: no comments, no markup, one space between."""
+    text = _TAG_RE.sub("", _COMMENT_RE.sub(" ", text))
+    text = re.sub(r"[*`_]", "", html.unescape(text)).replace("-", " ")
+    return " ".join(text.split())
+
+
+def _number(found: str) -> int:
+    found = found.lower().replace(",", "")
+    if found.isdigit():
+        return int(found)
+    tens, _, unit = found.partition(" ")
+    return _TENS[tens] + (_UNITS.index(unit) if unit else 0) if tens in _TENS else _UNITS.index(found)
+
+
+def check_control_counts(files: dict[str, str], canonical: int | None) -> list[str]:
+    problems: list[str] = []
+    for name, text in files.items():
+        for before, after in _CONTROL_CLAIM_RE.findall(_reader_text(text)):
+            found = before or after
+            if canonical is None:
+                problems.append(f"{name}: claims {found} trust controls but SECURITY.md has no "
+                                f"control table to count — the claim cannot be checked.")
+            elif _number(found) != canonical:
+                problems.append(f"{name}: claims {found} trust controls but SECURITY.md's control "
+                                f"table has {canonical} rows — stale control count.")
+    return problems
+
+
+def _security_text(root: Path) -> str:
+    path = root / "SECURITY.md"
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
 def check_satellite_text(text: str, current: str, name: str) -> list[str]:
+    problems = check_control_counts({name: text}, canonical_control_count(_security_text(REPO_ROOT)))
     if current not in text:
-        return [f"{name}: does not mention {current} — satellite copy is stale."]
-    return []
+        problems.append(f"{name}: does not mention {current} — satellite copy is stale.")
+    return problems
 
 
 def _canonical_tool_count(root: Path) -> int | None:
@@ -219,6 +290,11 @@ def check_repo(root: Path) -> list[str]:
         if (root / name).exists()
     }
     problems += check_version_literals(receipt_docs, current)
+    security = _security_text(root)
+    if canonical_control_count(security) is None:
+        problems.append("SECURITY.md has no control table (`| Control | Defends against |`) — "
+                        "every trust-controls claim counts its rows.")
+    problems += check_control_counts({"README.md": readme}, canonical_control_count(security))
     return problems
 
 

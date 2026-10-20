@@ -20,6 +20,7 @@ from proximo.core.errors import ProximoError
 
 NODE, CT = "pve1", "101"
 EXEC = f"/nodes/{NODE}/lxc/{CT}/exec"
+EXEC_KEY = ("pve", "POST", "/nodes/{node}/lxc/{vmid}/exec")
 UPID = f"UPID:{NODE}:000A1B2C:0D3E4F50:68DA0000:vzsnapshot:{CT}:root@pam!proximo:"
 
 
@@ -283,12 +284,15 @@ def test_under_enforced_consent_no_grant_for_the_command_snapshots_nothing(box, 
     (("pve", "POST", "/nodes/{node}/lxc/{vmid}/status/stop"), f"/nodes/{NODE}/lxc/{CT}/status/stop"),  # not a snapshot
     (("pve", "POST", "/nodes/{node}/qemu/{vmid}/snapshot"), f"/nodes/{NODE}/qemu/{CT}/snapshot"),    # a VM's
     (("pve", "POST", "/nodes/{node}/lxc/{vmid}/status/stop"), f"/nodes/{NODE}/lxc/{CT}/snapshot"),    # wrong row
+    # the snapshot row dialled at another path of the same shape on the same container (lens 3 F1)
+    (("pve", "POST", "/nodes/{node}/lxc/{vmid}/snapshot"), f"/nodes/{NODE}/lxc/{CT}/config"),
 ])
 def test_the_consent_exemption_covers_no_other_shape(box, monkeypatch, tmp_path, row_key, path):
     _grants(monkeypatch, tmp_path)
     api, _ = _wire(monkeypatch)
     with pytest.raises(ProximoError, match="consent exemption"):
-        engine.execute(engine.table()[row_key], {"snapname": "proximo_x"}, cfg=box, path=path, net_of=(EXEC, None))
+        engine.execute(engine.table()[row_key], {"snapname": "proximo_x"}, cfg=box, path=path,
+                       net_of=(engine.table()[EXEC_KEY], EXEC, None))
     assert api.calls == []
 
 
@@ -298,7 +302,8 @@ def test_a_net_of_that_is_not_a_container_command_covers_nothing(box, monkeypatc
     row = engine.table()[("pve", "POST", "/nodes/{node}/lxc/{vmid}/snapshot")]
     with pytest.raises(ProximoError, match="consent exemption"):
         engine.execute(row, {"snapname": "proximo_x"}, cfg=box, path=f"/nodes/{NODE}/lxc/{CT}/snapshot",
-                       net_of=(f"/nodes/{NODE}/lxc/{CT}/status/stop", None))
+                       net_of=(engine.table()[("pve", "POST", "/nodes/{node}/lxc/{vmid}/status/stop")],
+                               f"/nodes/{NODE}/lxc/{CT}/status/stop", None))
     assert api.calls == []
 
 

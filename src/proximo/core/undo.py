@@ -205,13 +205,17 @@ def _rollback(ref: str, entry: dict, detail: dict, lines: list[str], lcfg: Any, 
     default, armed and tiered to run, receipted, its task's outcome reported as it went. The
     rollback address is rebuilt from the row's own spelling, never taken as written."""
     target, name = entry.get("target") or "", str(detail.get("snapshot") or "")
-    m = re.fullmatch(r"(/nodes/[^/]+/lxc/\d+)/(?:exec|psql)", target)
-    if m is None or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,39}", name):
+    try:
+        cmd = engine.resolve("pve", "POST", target) if target else None
+    except ProximoError:
+        cmd = None
+    if cmd is None or not cmd.net or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,39}", name):
         raise ProximoError(f"capture {ref} names no container snapshot this door can roll back")
-    path = f"{m.group(1)}/snapshot/{name}/rollback"
-    if detail.get("rollback") != f"POST {path}":
+    method, _, template = cmd.net["rollback"].partition(" ")   # the command's own net, never a literal
+    path = engine.fill(template, {**engine.bind(cmd, target), "snapname": name})
+    if detail.get("rollback") != f"{method} {path}":
         raise ProximoError(f"capture {ref}'s rollback address does not match its own target; refused")
-    row = engine.table().get(("pve", "POST", "/nodes/{node}/lxc/{vmid}/snapshot/{snapname}/rollback"))
+    row = engine.table().get(("pve", method, template))
     if row is None or row.gate or row.excluded:
         raise ProximoError("the vendor's container rollback is not served; nothing rolls back this capture")
     try:

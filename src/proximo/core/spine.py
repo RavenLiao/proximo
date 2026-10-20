@@ -30,7 +30,7 @@ vendor publishes a GET of the same address, that read is taken and receipted, bo
 such read exists the receipt says so. No reverse call is invented; the tier word is the human's
 judgement on recoverability and the receipt is the evidence.
 
-TAINT keys on ADDRESSES here (`taint.toml`, read onto `engine.Row.untrusted`): the engine marks
+TAINT keys on ADDRESSES here (`records/taint.toml`, built onto `engine.Row.untrusted`): the engine marks
 the session before serving one of those reads, on the same file the 0.44 wrappers mark by tool
 name, and `govern` runs the two couplings in the 0.44 order, TAINT-FORBID after FORBID (a wall
 after an untrusted read, no consent escape) and TAINT-REQUIRE-CONSENT before CONSENT. One copy
@@ -684,7 +684,7 @@ def bound(data: Any) -> Any:
 # imports them, the contain/lease/envelope pattern). A read whose response carries guest- or
 # externally-authored bytes marks the session; the mark is a FILE beside the ledger, sticky,
 # re-stat'd on every question, cleared only out of band. The 0.44 module classified BY TOOL
-# NAME; the engine classifies by ADDRESS (`engine.Row.untrusted`, the shipped `taint.toml`).
+# NAME; the engine classifies by ADDRESS (`engine.Row.untrusted`, built from `records/taint.toml`).
 
 TAINT_TRACK_ENV = "PROXIMO_TAINT_TRACK"
 TAINT_FORBID_ENV = "PROXIMO_TAINT_FORBID"

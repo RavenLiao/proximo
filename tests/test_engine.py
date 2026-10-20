@@ -25,19 +25,31 @@ class EstateCfg(wire.Plane):
     audit_log_path: str = ""
     audit_key_path: str | None = None
 
-# --- the table is the vendor's, and it must agree with a second vendored source ---------------
+# --- the table is the vendor's, whole ---------------------------------------------------------
+
+#: The vendor's published operations per product, fetched 2026-09-19 (records/README.md). Until
+#: 2026-10-19 the package carried the trees twice (`apidoc/` and the table) and a test held them to
+#: each other; one JSON keeps one copy, so the guard against a generator that drops addresses (the
+#: 61% problem) is this pin. A vendor re-fetch moves these numbers on purpose, in the same commit.
+VENDOR_OPERATIONS = {"pve": 680, "pbs": 367, "pmg": 425, "pdm": 327}
+# The address SET, not just its size: a vendor row swapped for another of the same count keeps every
+# pin above and changes this one. Moves only on a re-fetch (records/README.md), by hand, with the diff.
+VENDOR_ADDRESSES_SHA256 = "21d313751a35bafc46f24eafe53bf1381e68bb7b603c2b36c20e00ed52bcb772"
+
 
 def test_table_covers_every_published_address():
-    """The table and `apitree` are vendored from the same upstream by DIFFERENT code paths.
-
-    If the committed table ever goes stale, these two disagree and this goes red. That is the
-    whole guard against the 61% problem quietly coming back: coverage is asserted, not assumed.
-    """
-    for product in apitree.PRODUCTS:
-        tree = {(p, m) for p, m in apitree.raw_tree(product)}
+    for product, count in VENDOR_OPERATIONS.items():
+        tree = set(apitree.raw_tree(product))
         # Authored rows (shell.toml, wire=ssh) are NOT the vendor's; test_core_shell_lane pins them exactly.
         tab = {(r.path, r.method) for r in engine.table().values() if r.product == product and r.wire == "http"}
-        assert tree == tab, f"{product}: table and apitree disagree on {tree ^ tab}"
+        assert tree == tab and len(tab) == count, f"{product}: {len(tab)} published, the pin says {count}"
+
+
+def test_the_vendor_address_set_is_the_one_the_record_was_judged_against():
+    import hashlib
+    lines = sorted(f"{p}|{m}|{path}" for p in VENDOR_OPERATIONS for path, m in apitree.raw_tree(p))
+    assert hashlib.sha256("\n".join(lines).encode()).hexdigest() == VENDOR_ADDRESSES_SHA256, \
+        "the vendor's address set moved: re-fetch per records/README.md, read the diff, move this pin by hand"
 
 
 def test_access_is_derived_from_method_for_every_row():
@@ -114,7 +126,7 @@ def test_a_hard_gated_address_is_refused_and_names_the_gate():
     """Since 2026-10-04 the five byte streams are the download lane and the agent subtree is its
     own lane, so no published row is hard gated; the shape stays the engine's (a future gate),
     and the control is manufactured from a live row the way `_tiered` manufactures a grant."""
-    assert not [r for r in engine.table().values() if r.gate and engine.opt_in_lane(r) is None]
+    assert not [r for r in engine.table().values() if r.gate and r.lane is None]
     row = engine.resolve("pve", "GET", "/version")
     verdict = engine.govern(engine.Row(**{**row.__dict__, "gate": "a planted hard gate"}))
     assert not verdict.allowed and "gated" in verdict.reason
@@ -409,8 +421,9 @@ def test_a_placeholder_given_twice_with_two_values_is_refused(monkeypatch, armed
 # --- family tiering: 145 decisions instead of 818 ---------------------------------------------
 
 def test_family_drops_placeholders_and_cuts_at_two_literals():
-    assert engine.family("/nodes/{node}/qemu/{vmid}/config") == "/nodes/qemu"
-    assert engine.family("/cluster/sdn/zones/{zone}") == "/cluster/sdn"
+    from test_tiers_harvest import bj
+    assert bj.family("/nodes/{node}/qemu/{vmid}/config") == "/nodes/qemu"
+    assert bj.family("/cluster/sdn/zones/{zone}") == "/cluster/sdn"
 
 
 def test_the_shipped_tiers_file_opens_exactly_what_it_says_and_every_grant_has_a_why():
@@ -420,16 +433,15 @@ def test_the_shipped_tiers_file_opens_exactly_what_it_says_and_every_grant_has_a
     tiered = [r for r in engine.table().values() if r.tier is not None]
     assert tiered, "the shipped tiers file authorizes nothing: the grant did not load"
     assert all(r.access == "mutate" and not r.excluded
-               and (not r.gate or engine.opt_in_lane(r) is not None) for r in tiered)
+               and (not r.gate or r.lane is not None) for r in tiered)
     assert all(isinstance(r.why, str) and r.why.strip() for r in tiered), "a grant without a why"
     import tomllib
-    from importlib import resources
 
-    from test_tiers_harvest import EXACT_FAMILY, EXACT_GRANT  # one pin each, not copies
-    shipped = tomllib.loads(resources.files("proximo.core").joinpath("tiers.toml").read_text())["tier"]
+    from test_tiers_harvest import EXACT_FAMILY, EXACT_GRANT, HARVESTED, bj  # one pin each, not copies
+    shipped = tomllib.loads(HARVESTED.read_text())["tier"]
     families, _held = shipped.pop("family"), shipped.pop("held")    # held: tests/test_arena.py's pin
     assert len(shipped) == EXACT_GRANT and len(families) == EXACT_FAMILY
-    assert all(r.key in shipped or f"{r.product}:{engine.family(r.path)}" in families for r in tiered)
+    assert all(r.key in shipped or f"{r.product}:{bj.family(r.path)}" in families for r in tiered)
 
 
 def test_a_table_form_line_without_a_why_is_refused(tiers_file):
@@ -456,40 +468,15 @@ def test_no_guessed_family_draft_ships_any_more():
 # --- the second lens round. M7 first: NONE of the tier wiring was driven from real TOML -------
 
 @pytest.fixture
-def tiers_file(monkeypatch):
-    """Drive `_tiers()` from actual TOML bytes.
+def tiers_file(records):
+    """Drive the table from actual TOML bytes, through the real build.
 
     Every tier test before this one built `engine.Row(**{**row.__dict__, "tier": ...})` by hand,
-    so the address-beats-family lookup in `table()` was never executed under a non-empty file.
-    That is why the whole second round of findings was green: the tests asserted the shape of a
-    Row nobody loads, not the behaviour of the loader.
+    so the address-beats-family lookup was never executed under a non-empty file. That is why the
+    whole second round of findings was green: the tests asserted the shape of a Row nobody loads,
+    not the behaviour of the loader.
     """
-    real = engine.resources.files
-
-    def install(text: str):
-        class _Bytes:
-            def __init__(self, b):
-                self._b = b
-
-            def read_bytes(self):
-                return self._b
-
-        class _Pkg:
-            def joinpath(self, name):
-                if name == "tiers.toml":
-                    return _Bytes(text.encode())
-                return real("proximo.core").joinpath(name)
-
-        monkeypatch.setattr(engine.resources, "files",
-                            lambda pkg: _Pkg() if pkg == "proximo.core" else real(pkg))
-        engine._tiers.cache_clear()
-        engine.table.cache_clear()
-        return engine.table()
-
-    yield install
-    monkeypatch.undo()
-    engine._tiers.cache_clear()
-    engine.table.cache_clear()
+    return lambda text: records(**{"tiers.toml": text})
 
 
 def test_a_family_tier_loaded_from_real_toml_reaches_its_addresses(tiers_file):
@@ -512,22 +499,12 @@ def test_a_tier_key_matching_no_address_is_refused_not_silently_inert(tiers_file
         tiers_file('[tier]\n"pve:DELETE /nodes/{n}/ceph/mon/{mid}" = "destructive"\n')
 
 
-def test_an_absent_tiers_file_means_everything_strict_not_a_crash(tiers_file, monkeypatch):
+def test_an_absent_tiers_file_means_everything_strict_not_a_crash(records):
     """`_tiers()` returned a bare {} and `table()` then did tiers["address"] -> KeyError, which
     the door laundered as the CALLER's typo. The docstring promised "absent = strict"."""
-    real = engine.resources.files
-
-    class _Pkg:
-        def joinpath(self, name):
-            if name == "tiers.toml":
-                raise FileNotFoundError(name)
-            return real("proximo.core").joinpath(name)
-
-    monkeypatch.setattr(engine.resources, "files",
-                        lambda pkg: _Pkg() if pkg == "proximo.core" else real(pkg))
-    engine._tiers.cache_clear()
-    engine.table.cache_clear()
+    records(**{"tiers.toml": None})
     assert engine.resolve("pve", "GET", "/version").tier is None
+    assert all(r.tier is None for r in engine.table().values())
 
 
 def test_family_as_an_address_key_is_refused_with_a_reason(tiers_file):

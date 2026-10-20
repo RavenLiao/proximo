@@ -316,9 +316,11 @@ def _is_allowed_binary(path: str) -> bool:
 
 
 def _is_text_in_gzip(path: str) -> bool:
-    """The core's generated records are gzipped JSON (the governance table): a blob only by
-    encoding. It is scanned as the text it holds, whole, never allowed by path."""
-    return path.startswith("src/proximo/core/") and path.endswith(".json.gz")
+    """The core's generated records are gzipped JSON (the one JSON the package ships, and the
+    vendor stage it is built from under `records/`): a blob only by encoding. Each is scanned as the
+    text it holds, whole, never allowed by path. A vendor stage left to the byte scan would hide an
+    address inside the compressed stream, where no pattern can see it."""
+    return path.startswith(("src/proximo/core/", "records/")) and path.endswith(".json.gz")
 
 
 def _extract_strings(blob: bytes) -> str:

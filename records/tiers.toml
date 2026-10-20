@@ -43,7 +43,7 @@
 # The join REFUSED AMBIGUITY: a tool naming zero or two-plus mutating addresses, or a plan that
 # branched into two judgements, was left out rather than guessed; those addresses are refused
 # even when armed until a hand writes their line here.
-# `python scripts/tier_preview.py src/proximo/core/tiers.toml` shows the grant as the engine reads it.
+# `python scripts/tier_preview.py records/tiers.toml` shows the grant as the engine reads it.
 
 [tier]
 "pbs:DELETE /config/access/ad/{realm}" = { tier = "destructive", why = "PERMANENTLY removes AD realm {realm!r} — no undo | any users who authenticate via {realm!r} can no longer log in | Smoke-confirm: whether PBS user records under this realm's namespace (userid ending '@{realm}') are also removed or left orphaned [pbs_realm_ad_delete, RISK_MEDIUM]" }

@@ -1,4 +1,4 @@
-"""The SECRET record: `src/proximo/core/secrets.toml`, what a door withholds from a read.
+"""The SECRET record: `records/secrets.toml`, what a door withholds from a read.
 
 The 0.44 wrappers stripped credentials from a read before the model saw it (a PBS remote's
 password, a fetchmail pass, an SDN lock token, an ACME plugin's DNS keys). The door served the
@@ -20,9 +20,10 @@ import pytest
 
 from proximo.core import engine, wire
 from proximo.core.errors import ProximoError
+from test_tiers_harvest import bj  # the record is built, with its checks, by the build
 
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "proximo"
-RECORD = SRC / "core" / "secrets.toml"
+RECORD = SRC.parent.parent / "records" / "secrets.toml"
 
 #: pve 21 · pbs 17 · pmg 16 · pdm 14. 61 on 2026-09-24 (the wrappers' strips + the vendor schemas +
 #: lens 1); +6 on 2026-09-28, the strips 0.44 kept in shapes the scan could not see (STRIPS_044);
@@ -54,7 +55,7 @@ def test_the_record_is_exact_and_names_only_addresses_the_door_serves():
     live = {r.key: r for r in engine.table().values()}
     keys = list(_read_lines())
     assert not (set(keys) - set(live)), sorted(set(keys) - set(live))[:5]
-    assert not [k for k in keys if live[k].excluded or (live[k].gate and engine.opt_in_lane(live[k]) is None)
+    assert not [k for k in keys if live[k].excluded or (live[k].gate and live[k].lane is None)
                 or (live[k].method != "GET" and live[k].access != "mutate")]
     assert len(keys) == EXACT_LINES, f"the record holds {len(keys)} lines, the pin says {EXACT_LINES}"
 
@@ -199,14 +200,14 @@ NOT_A_CREDENTIAL_AT = {
 
 def _uncovered(vendor: dict[str, list[str]]) -> list[str]:
     """Every vendor candidate the record neither withholds nor names as no credential. A
-    mutation's answer is governed by its OWN line merged with its read twin's (`engine.secret_rule`),
+    mutation's answer is governed by its OWN line merged with its read twin's (the row's `secret`),
     a bearer line serves it whole and labelled, and a HELD, excluded or hard-gated address never
     answers at all (two lenses, 2026-10-04: the guard had read GETs alone)."""
     out = []
     live = {r.key: r for r in engine.table().values()}
     for addr, fields in vendor.items():
         row = live.get(addr)
-        if row is not None and (row.held or row.excluded or (row.gate and engine.opt_in_lane(row) is None)):
+        if row is not None and (row.held or row.excluded or (row.gate and row.lane is None)):
             continue
         plane, rest = addr.split(":", 1)
         twin = f"{plane}:GET {rest.split(' ', 1)[1]}"
@@ -246,31 +247,14 @@ def test_the_vendor_guard_sees_a_credential_it_was_never_shown():
     (b"[secret]\n\"pmg:GET /quarantine/link\" = { bearer = \"yes\", why = \"a link\" }\n", "without a why or a field"),
     (b"[other]\n", "non-empty table"),
 ])
-def test_a_record_that_cannot_be_read_refuses_by_name(monkeypatch, body, match):
-    class _File:
-        def joinpath(self, _name):
-            return self
-
-        def read_bytes(self):
-            if body is None:
-                raise FileNotFoundError("secrets.toml")
-            return body
-
-    monkeypatch.setattr(engine.resources, "files", lambda _pkg: _File())
-    engine._secrets.cache_clear()
-    try:
-        with pytest.raises(ProximoError, match=match):
-            engine._secrets()
-    finally:
-        engine._secrets.cache_clear()
+def test_a_record_that_cannot_be_read_refuses_by_name(body, match):
+    with pytest.raises(ProximoError, match=match):
+        bj.secrets(None if body is None else body.decode())
 
 
-def test_a_line_for_an_address_the_door_never_serves_is_refused(monkeypatch):
-    engine._secrets.cache_clear()
-    monkeypatch.setattr(engine, "_secrets",
-                        lambda: {"pmg:GET /config/ldap/{section}/config": (frozenset({"bindpw"}), frozenset())})
+def test_a_line_for_an_address_the_door_never_serves_is_refused():
     with pytest.raises(ProximoError, match="match no address the door answers"):
-        engine._refuse_inert_secrets(dict(engine.table()))
+        bj.refuse_inert_secrets(dict(engine.table()), {"pmg:GET /config/ldap/{section}/config": {"drop": ["bindpw"]}})
 
 
 # ---- the behaviour, on both doors --------------------------------------------------------------
@@ -335,26 +319,31 @@ def test_a_bearer_read_is_served_whole_and_says_it_is_a_credential(monkeypatch, 
     assert "SECRET" not in pathlib.Path(cfg.audit_log_path).read_text()   # the ledger never holds it
 
 
+def _rule(product, method, path):
+    return engine.resolve(product, method, path).secret
+
+
 def test_a_bearer_value_never_reaches_a_receipt_raw():
     """The ledger's scrub, not only the envelope: an UNDO capture or a mutation's args under a
     bearer line are fingerprinted whole (lens 2026-09-28: `ledgered` read only drop and userinfo)."""
-    rule = engine.secret_rule(engine.resolve("pmg", "GET", "/quarantine/link"))
+    rule = engine.resolve("pmg", "GET", "/quarantine/link").secret
     assert rule[4]
     assert engine.ledgered(LINK, rule=rule).startswith("[redacted sha256:")
     assert "SECRET" not in json.dumps(engine.ledgered({"link": LINK, "mail": "a@b"}, rule=rule))
     assert engine.ledgered(LINK) == LINK            # the control: no line, no fingerprint
 
 
-def test_an_own_line_merges_with_the_read_twins_never_replaces_it(monkeypatch):
+def test_an_own_line_merges_with_the_read_twins_never_replaces_it(records):
     """Lens 2 N1: an own bearer line replaced the twin's `password` drop wholesale. The rule is
-    the union: the twin's drops still withhold a mutation's echo, bearer comes from the own line."""
-    row = engine.resolve("pbs", "PUT", "/config/remote/{name}")
-    twin = engine._secrets()["pbs:GET /config/remote/{name}"]
-    assert "password" in twin[0] and engine.secret_rule(row) == twin        # no own line: the twin's
-    own = {**engine._secrets(), row.key: (frozenset(), frozenset(), frozenset(), False, "a credential")}
-    monkeypatch.setattr(engine, "_secrets", lambda: own)
-    merged = engine.secret_rule(row)
-    assert "password" in merged[0] and merged[4] == "a credential"
+    the union, MERGED IN THE BUILD: the twin's drops still withhold a mutation's echo, bearer
+    comes from the own line. Planted through the real build, served through the real table."""
+    key = ("pbs", "PUT", "/config/remote/{name}")
+    twin = engine.table()[("pbs", "GET", "/config/remote/{name}")].secret
+    assert "password" in twin[0] and engine.table()[key].secret == twin        # no own line: the twin's
+    real = bj.read_inputs()[1]["secrets.toml"]
+    line = '\n"pbs:PUT /config/remote/{name}" = { bearer = true, why = "a credential, planted" }\n'
+    row = records(**{"secrets.toml": real + line})[key]
+    assert "password" in row.secret[0] and row.secret[4] == "a credential, planted"
     out = engine._envelope(row, row.path, {"host": "h", "password": "HUNTER2"})
     assert out["withheld"] == ["password"] and "HUNTER2" not in repr(out) and out["bearer_credential"]
 
@@ -379,8 +368,8 @@ def test_userinfo_is_masked_to_the_host_and_named(monkeypatch, cfg):
 
 
 def test_a_nested_field_is_withheld_at_any_depth():
-    data, withheld = engine.withhold("pve:GET /cluster/sdn/fabrics/all",
-                                     {"fabrics": [{"id": "f1", "lock-token": "L"}], "nodes": [{"lock-token": "M"}]})
+    data, withheld = engine.withhold({"fabrics": [{"id": "f1", "lock-token": "L"}], "nodes": [{"lock-token": "M"}]},
+                                     _rule("pve", "GET", "/cluster/sdn/fabrics/all"))
     assert data == {"fabrics": [{"id": "f1"}], "nodes": [{}]} and withheld == ["lock-token"]
 
 
@@ -407,17 +396,17 @@ def test_the_ledger_fingerprints_the_record_fields_a_name_rule_cannot_see(monkey
 
 def test_a_key_value_row_is_withheld_by_its_option_name():
     rows = [{"key": "cores", "value": "4"}, {"key": "cipassword", "value": "S3cr3t", "pending": "N3w"}]
-    data, withheld = engine.withhold("pve:GET /nodes/{node}/qemu/{vmid}/pending", rows)
+    data, withheld = engine.withhold(rows, _rule("pve", "GET", "/nodes/{node}/qemu/{vmid}/pending"))
     assert data == [{"key": "cores", "value": "4"},
                     {"key": "cipassword", "value": "[withheld]", "pending": "[withheld]"}]
     assert withheld == ["cipassword"]
-    assert engine.withhold("pve:GET /nodes/{node}/status", rows) == (rows, [])   # the control: no line, no change
+    assert engine.withhold(rows, _rule("pve", "GET", "/nodes/{node}/status")) == (rows, [])   # the control: no line
 
 
 def test_the_rendered_cloud_init_hides_its_password_lines_and_keeps_the_rest():
     body = ("#cloud-config\nuser: admin\npassword: S3cr3t\nchpasswd:\n  expire: False\n"
             "ssh_authorized_keys:\n  - ssh-ed25519 AAAA\n")
-    data, withheld = engine.withhold("pve:GET /nodes/{node}/qemu/{vmid}/cloudinit/dump", body)
+    data, withheld = engine.withhold(body, _rule("pve", "GET", "/nodes/{node}/qemu/{vmid}/cloudinit/dump"))
     assert "S3cr3t" not in data and "password: [withheld]" in data and withheld == ["password"]
     assert data.replace("password: [withheld]", "password: S3cr3t") == body
 
@@ -448,3 +437,17 @@ def test_a_mutation_that_echoes_its_resource_is_withheld_by_its_read(monkeypatch
 ])
 def test_mask_userinfo_splits_at_the_last_at(text, want):
     assert engine._mask_userinfo(text) == want
+
+
+@pytest.mark.parametrize("line, match", [
+    ('"pve:GET /nodes/{node}/not-a-thing" = { drop = ["password"], why = "an address nobody publishes [lens]" }',
+     "secrets.toml names 1 key"),
+    ('"pve:POST /nodes/{node}/not-a-thing" = { args = ["password"], why = "a mutation nobody serves [lens]" }',
+     "secrets.toml names arg-secret key"),
+])
+def test_the_build_itself_refuses_an_inert_secret_line(records, line, match):
+    """Not the function: the BUILD. A lens found `build()` green with its `refuse_inert_secrets`
+    and `refuse_inert_arg_secrets` calls deleted, because every test drove the functions directly."""
+    real = bj.read_inputs()[1]["secrets.toml"]
+    with pytest.raises(ProximoError, match=match):
+        records(**{"secrets.toml": real + "\n" + line + "\n"})

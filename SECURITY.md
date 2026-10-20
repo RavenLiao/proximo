@@ -329,7 +329,7 @@ Addresses worth attention because they can carry attacker- or guest-controlled t
 control turns "an untrusted read happened" into something the engine can act on by
 construction:
 
-- **Classification by address.** `src/proximo/core/taint.toml` names every address whose
+- **Classification by address.** `records/taint.toml` names every address whose
   response carries guest- or externally-authored bytes, with the sentence that says why,
   and the engine marks the same sticky marker before serving one. Honest limit: that record
   is total over what 0.44's curated tools ever classified, not over every read the vendor
@@ -424,7 +424,7 @@ access is broadest:
   tokens, the A2A signing key — is refused if group/other can access it (`mode & 0o077`).
 - **Credentials in what a read returns.** Some published reads carry a credential in their
   response (a PMG fetchmail password, a PBS remote's password, an ACME plugin's DNS-provider
-  keys, an SDN lock token). `src/proximo/core/secrets.toml` names each such address and
+  keys, an SDN lock token). `records/secrets.toml` names each such address and
   field; the engine withholds those fields before the response reaches the model and says
   which in `withheld`, and the ledger fingerprints the same fields when a mutation sends
   them or UNDO captures them. The record is built from every read 0.44's curated tools

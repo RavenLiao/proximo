@@ -9,7 +9,7 @@ This prints every address a candidate file would make executable, grouped by tie
 gated and read-only rows separated out so the count is not inflated by rows that stay refused
 for other reasons.
 
-    python scripts/tier_preview.py src/proximo/core/tiers.toml
+    python scripts/tier_preview.py records/tiers.toml
     python scripts/tier_preview.py candidate.toml --verbose
 """
 from __future__ import annotations
@@ -21,6 +21,8 @@ import sys
 import tomllib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
+
+from build_proximo_json import family  # noqa: E402
 
 from proximo.core import engine  # noqa: E402
 
@@ -34,7 +36,7 @@ def main() -> int:
     parsed = tomllib.loads(args.candidate.read_text()).get("tier", {})
     def _tier(v):
         return v["tier"] if isinstance(v, dict) else v
-    addresses = {k: _tier(v) for k, v in parsed.items() if k != "family"}
+    addresses = {k: _tier(v) for k, v in parsed.items() if k not in ("family", "held")}   # held: no tier, by design
     families = {k: _tier(v) for k, v in parsed.get("family", {}).items()}
 
     rows = engine.table().values()
@@ -43,7 +45,7 @@ def main() -> int:
         hit = [r for r in rows if f"{r.product}:{r.method} {r.path}" == key]
         (opened if hit else inert).append((key, tier, hit))
     for key, tier in families.items():
-        hit = [r for r in rows if f"{r.product}:{engine.family(r.path)}" == key]
+        hit = [r for r in rows if f"{r.product}:{family(r.path)}" == key]
         (opened if hit else inert).append((key, tier, hit))
 
     flat = [(tier, r) for _, tier, hits in opened for r in hits]

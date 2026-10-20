@@ -15,6 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import release_leak_audit as rla  # noqa: E402
@@ -513,23 +515,23 @@ def _gz(obj) -> bytes:
     return _gzip.compress(_json.dumps(obj).encode("utf-8"))
 
 
-def test_the_cores_gzipped_table_is_scanned_as_text_not_waved_through_as_a_binary():
-    """`src/proximo/core/table.json.gz` is the governance table, gzipped JSON. Allowing it by path
-    would wave through whatever it held; refusing it as an unreviewed binary refused every tip since
-    it landed. It is gunzipped and scanned whole: a planted private address inside is red by line,
-    a clean table is green, and the committed table is clean."""
-    clean = rla.scan_binary("src/proximo/core/table.json.gz", _gz({"rows": [{"path": "/nodes"}]}))
+@pytest.mark.parametrize("gz", ["src/proximo/core/proximo.json.gz", "records/vendor.json.gz"])
+def test_the_cores_gzipped_records_are_scanned_as_text_not_waved_through_as_a_binary(gz):
+    """The one JSON and the vendor stage it is built from are gzipped JSON. Allowing them by path
+    would wave through whatever they held; refusing them as unreviewed binaries refused every tip
+    since they landed. Each is gunzipped and scanned whole: a planted private address inside is red
+    by line, a clean record is green, and the committed one is clean."""
+    clean = rla.scan_binary(gz, _gz({"rows": [{"path": "/nodes"}]}))
     assert clean == []
     lab = "10.99.42.17"  # leak-audit: allow
-    planted = rla.scan_binary("src/proximo/core/table.json.gz",
-                              _gz({"rows": [{"path": "/nodes", "note": f"lab at {lab}"}]}))
+    planted = rla.scan_binary(gz, _gz({"rows": [{"path": "/nodes", "note": f"lab at {lab}"}]}))
     assert [f.kind for f in planted] == ["rfc1918-ip (in gzip)"] and planted[0].match == lab
-    garbage = rla.scan_binary("src/proximo/core/table.json.gz", b"not a gzip")
+    garbage = rla.scan_binary(gz, b"not a gzip")
     assert [f.kind for f in garbage] == ["unreadable-gzip"]
-    other = rla.scan_binary("src/proximo/core/other.bin", _gz({}))
-    assert "unreviewed-binary" in [f.kind for f in other]        # the path rule is narrow: core .json.gz only
-    real = pathlib.Path(__file__).resolve().parent.parent / "src" / "proximo" / "core" / "table.json.gz"
-    assert rla.scan_binary("src/proximo/core/table.json.gz", real.read_bytes()) == []
+    other = rla.scan_binary(gz.rsplit("/", 1)[0] + "/other.bin", _gz({}))
+    assert "unreviewed-binary" in [f.kind for f in other]        # the path rule is narrow: .json.gz only
+    real = pathlib.Path(__file__).resolve().parent.parent / gz
+    assert rla.scan_binary(gz, real.read_bytes()) == []
 
 
 def test_a_gzipped_record_cannot_hide_an_address_from_the_scan():
@@ -537,7 +539,7 @@ def test_a_gzipped_record_cannot_hide_an_address_from_the_scan():
     allow-marker anywhere in it silenced the whole record; and a JSON-escaped address never met the
     pattern. The record is decoded as JSON and scanned as the strings it holds, markers ignored."""
     import gzip as _gzip
-    gz = "src/proximo/core/table.json.gz"
+    gz = "src/proximo/core/proximo.json.gz"
     whole = _gz({"rows": [{"path": "/nodes"}]})
     assert [f.kind for f in rla.scan_binary(gz, whole[:-6])] == ["unreadable-gzip"]           # EOFError
     flipped = whole[:12] + bytes([whole[12] ^ 0xFF]) + whole[13:]

@@ -210,11 +210,11 @@ The six tools with typed inputs: [`docs/TOOLS.md`](docs/TOOLS.md) · the walkthr
 
 **The core alone, no model in the loop:** the same install ships `proximo-core pve GET /nodes/pve1/status` (or `--plan` on any address: the verdict and the published schema, touching nothing). Its import closure is `httpx` and nothing else (measured by a test); every published address on all four products; the same arm gate, tiers and audit ledger as the MCP door. The core has its own network doors, each the 0.44 face's perimeter with the core behind it: `proximo-mcp-http` (MCP over streamable HTTP), `proximo-http` (REST, `POST /tools/{name}` with an OpenAPI document) and `proximo-a2a` (an Agent2Agent card whose skills are the six tools).
 
-> 📦 **`0.45.1`**: on [PyPI](https://pypi.org/project/proximo-proxmox/), [GitHub](https://github.com/john-broadway/proximo/releases/tag/v0.45.1), and [GHCR](https://github.com/john-broadway/proximo/pkgs/container/proximo) (signed multi-arch image).
+> 📦 **`0.46.0`**: on [PyPI](https://pypi.org/project/proximo-proxmox/), [GitHub](https://github.com/john-broadway/proximo/releases/tag/v0.46.0), and [GHCR](https://github.com/john-broadway/proximo/pkgs/container/proximo) (signed multi-arch image).
 >
-> **New in 0.45.1 (a TLS failure names itself).** Reported by a site whose pin broke when Proxmox renewed a node's certificate, and every call read `ConnectError`. `proximo doctor` and every audit row now name the failure: a pin mismatch with the fingerprint the server presents and the one you pinned, or the reason a certificate did not verify. New opt-in: `tls_strict = false` (or `PROXIMO_TLS_STRICT=false`) trusts Proxmox's own cluster CA, which Python 3.13 refuses for its missing keyUsage, so a renewed node cert no longer breaks you; the chain and the hostname or IP are still checked.
+> **New in 0.46.0 (one JSON, and the door has a contract).** The package carries one data file, `proximo.json.gz`: every address the four Proxmox products publish, with the vendor's schema and every judgement Proximo makes about it (tier and its sentence, taint, the fields withheld, a snapshot net, the read that shows a target), built from `records/` by a script that refuses any authored line that would do nothing. The engine reads the row and never asks which command it is; its answers are proven identical on all 1,804 addresses. `docs/door-contract.json` is door contract 1: the six tools and the shapes of their answers and refusals, held by a test; build against the number, not the version.
 >
-> Recent: **0.45.0** made Proximo the core: six tools over every address, the 924 wrappers gone. See [SECURITY.md](SECURITY.md) for what each control honestly holds.
+> Recent: **0.45.1** made a TLS failure name itself and let `tls_strict = false` trust Proxmox's own cluster CA. See [SECURITY.md](SECURITY.md) for what each control honestly holds.
 
 Proximo runs **on your machine**, on demand. No daemon, no open port.
 
@@ -251,14 +251,14 @@ One container is the demo. A cluster is the point.
 
 ## Status: the arena record
 
-- 🩸 **0.45.1**: **A TLS failure names itself.** Issue #90: a site's fingerprint pin broke when Proxmox renewed a
-  node's certificate, and the doctor said only `ConnectError`. The doctor and every audit row now carry the pin
-  mismatch (both fingerprints) or OpenSSL's reason, from a table, never the exception's text. `tls_strict = false`
-  trusts the cluster CA by clearing only Python 3.13's strict check on that bundle. Tested on real TLS with a root
-  built the way PVE builds it; a security lens on the change folded.
+- 🩸 **0.46.0**: **One JSON, and the door has a contract.** One data file carries every published address and
+  everything Proximo judges about it, built from `records/` with every record check moved to the build; the
+  engine's special cases became columns on the row, proven identical on all 1,804 addresses, 1,103 code lines
+  from 1,446. Door contract 1 freezes the six tools and the shapes of their answers and refusals. Three
+  adversarial lenses over the branch, one BLOCKING and four MAJOR folded, each replanted red.
 _Every release before it (every pillar, every redteam, every fix) lives in [`CHANGELOG.md`](./CHANGELOG.md)._
 
-**The numbers, honestly:** six tools over 1,804 published addresses, governed by what each address is (its method decides read or write, total by construction; the blast-radius tier is the one human-authored column, and an untiered mutation is refused, armed or not). **1,617 in-process tests** (ruff + pyright clean) pin the engine, the six pillars, the doors and the records, and a gate round neuters each pillar's gate one at a time and asks the suite to notice. This workspace administers its own Proxmox estate through Proximo daily (dogfood).
+**The numbers, honestly:** six tools over 1,804 published addresses, governed by what each address is (its method decides read or write, total by construction; the blast-radius tier is the one human-authored column, and an untiered mutation is refused, armed or not). **1,702 in-process tests** (ruff + pyright clean) pin the engine, the six pillars, the doors and the records, and a gate round neuters each pillar's gate one at a time and asks the suite to notice. This workspace administers its own Proxmox estate through Proximo daily (dogfood).
 
 **Proven live** (not mocks): the governed path end to end against a real PVE 9 node through this door, plans reading the live target, receipts on the keyed chain, before-state captures and their restore. The 0.44 wrappers' live record (a 3-node cluster, PBS, PMG, PDM, a real cross-datacenter move) stays in [`CHANGELOG.md`](./CHANGELOG.md) where it was earned; it is not re-claimed for the core.
 **Not yet proven — said plainly:** a small local model finishing a whole task through this door. Measured and driven on this release: a stock 1.5B behind llama.cpp with a 4,096-token context the server enforces, against a real PVE node, read-only. Its calls landed and the door's refusals named the fix each time (an invented field, the real ones listed); the prompt peaked at 3,074 tokens; the model did not finish the task, it invented a number. The window holds; a 1.5B does not. *Hardware*-watchdog fencing (needs physical iTCO/IPMI), and behavior at production scale. The 20 held addresses are never fired: refused by sentence, by design, not a gap.

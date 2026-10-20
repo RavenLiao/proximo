@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import importlib
 import os
 
@@ -108,3 +109,47 @@ def build_app(request):
     (2026-10-18) this fixture ran every perimeter test twice, once with the 0.44 server behind the
     perimeter and once with the core door; the 0.44 caller went with the 0.44 server."""
     return importlib.import_module(_DOORS[request.module.FACE]).build_app
+
+
+#: Every cache built from the one JSON, cleared together so a planted record reaches every reader.
+_DATA_CACHES = (
+    ("proximo.core.apitree", ("published", "raw_tree", "tree")),
+    ("proximo.core.engine", ("table", "untrusted_addresses")),
+    ("proximo.core.search", ("descriptions", "_index", "synonyms", "_stopwords")),
+    ("proximo.core.diagnose", ("subjects",)),
+)
+
+
+def _clear_data_caches():
+    for mod, names in _DATA_CACHES:
+        m = importlib.import_module(mod)
+        for n in names:
+            getattr(m, n).cache_clear()
+
+
+@pytest.fixture
+def records(monkeypatch):
+    """Plant record text and serve what it builds, through the real build.
+
+    `records(**{"tiers.toml": text})` builds the one JSON from the committed vendor rows and the
+    committed records with the named ones replaced (`None` = absent), installs it as what the
+    package's `proximo.json.gz` holds, and returns the engine's table. A record the build refuses
+    raises exactly as `scripts/build_proximo_json.py` would. The real file comes back after.
+    """
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import build_proximo_json as bj
+
+    from proximo.core import apitree, engine
+
+    def install(**texts):
+        vendor, real, _ = bj.read_inputs()
+        doc = bj.build(vendor, {**real, **texts})
+        _clear_data_caches()
+        monkeypatch.setattr(apitree, "published", functools.cache(lambda: doc))
+        return engine.table()
+
+    yield install
+    monkeypatch.undo()
+    _clear_data_caches()

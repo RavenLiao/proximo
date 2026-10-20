@@ -13,18 +13,16 @@ right address first 38% of the time and nothing at all 46% of the time, on 0.44'
   * ENOUGH OF THE QUESTION MUST LAND: a third of its words, and at least one in a segment or the
     description, or nothing comes back (a nonsense query returns nothing, not a handful of junk).
   * A PARENTHETICAL IS DETAIL about the answer, not words for the address, and is dropped.
-  * SYNONYMS ARE A RECORD (`vocab.toml`), each quoting the vendor's own use of the word.
+  * SYNONYMS ARE A RECORD (`records/vocab.toml`, shipped in the one JSON), each quoting the
+    vendor's own use of the word.
 
 The descriptions rank; they never ship in the answer, so the door's 4K budget holds.
 """
 from __future__ import annotations
 
-import json
 import math
 import re
-import tomllib
 from functools import cache
-from importlib import resources
 from typing import Any
 
 from proximo.core import apitree, engine
@@ -66,29 +64,29 @@ def tokens(text: str) -> list[str]:
 
 @cache
 def synonyms() -> dict[str, frozenset[str]]:
-    """The record, refused by name when a line has no why or means nothing."""
-    raw = tomllib.loads(resources.files("proximo.core").joinpath("vocab.toml").read_text())["synonym"]
-    bad = {k: v for k, v in raw.items()
-           if not (isinstance(v, dict) and isinstance(v.get("why"), str) and v["why"].strip()
+    """The vocabulary from the one JSON (`compile_vocab`, the check the build ran on
+    `records/vocab.toml`), in the record's own order."""
+    return compile_vocab(apitree.published()["vocab"])
+
+
+def compile_vocab(section: list[dict[str, Any]]) -> dict[str, frozenset[str]]:
+    """The record, refused by name when a line has no why or means nothing. `section` is the one
+    JSON's `vocab` list (`{word, means, why}` per entry). Pure: the build and the load share it."""
+    bad = [v.get("word") for v in section
+           if not (isinstance(v, dict) and isinstance(v.get("word"), str) and v["word"]
+                   and isinstance(v.get("why"), str) and v["why"].strip()
                    and isinstance(v.get("means"), list) and v["means"]
-                   and all(isinstance(m, str) and m for m in v["means"]))}
+                   and all(isinstance(m, str) and m for m in v["means"]))]
     if bad:
-        raise ProximoError(f"vocab.toml carries lines without a why or a meaning: {sorted(bad)}")
-    return {k: frozenset(v["means"]) for k, v in raw.items()}
+        raise ProximoError(f"vocab.toml carries lines without a why or a meaning: {sorted(str(b) for b in bad)}")
+    return {v["word"]: frozenset(v["means"]) for v in section}
 
 
 @cache
 def descriptions() -> dict[tuple[str, str, str], str]:
-    """(plane, METHOD, path) -> the vendor's sentence, from the vendored api-viewer trees."""
-    out = {}
-    base = resources.files("proximo.core").joinpath("apidoc")
-    for plane in apitree.PRODUCTS:
-        for path, method, text in json.loads(base.joinpath(f"{plane}.desc.json").read_text()):
-            out[(plane, method, path)] = text
-    # The authored rows (shell.toml) carry their own sentence, so `find` reaches them by meaning.
-    for r in engine._shell_rows(set()):
-        out[(r["product"], r["method"], r["path"])] = r["description"]
-    return out
+    """(plane, METHOD, path) -> the vendor's sentence; the shell lane's authored rows carry their
+    own, so `find` reaches them by meaning."""
+    return {(r["product"], r["method"], r["path"]): r["description"] for r in apitree.published()["rows"]}
 
 
 @cache

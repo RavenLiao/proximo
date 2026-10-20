@@ -5,8 +5,10 @@
     execute(row, args)             -> dict     the vendor's data in a labelled envelope
 
 GOVERNANCE IS DERIVED, NOT DECLARED. `access` comes from the HTTP method, so it is total over
-every published address and cannot drift the way 924 docstring markers can. The only
-human-authored column is `tier` (blast radius), which the vendor cannot publish for us.
+every published address and cannot drift the way 924 docstring markers can. The human-authored
+columns are the records' (`records/`: the tier, taint, secret, undo, shell and net judgements,
+each with its why); `tier` (blast radius) is the one that opens a mutation, and the vendor
+cannot publish it for us.
 
 FAIL-CLOSED ON SILENCE: an address with no authored tier is REFUSED for mutation even when the
 operator is armed. An untiered address is not "probably fine", it is unjudged, and the strictest
@@ -15,18 +17,15 @@ enables something the absence of a tier would have allowed.
 """
 from __future__ import annotations
 
-import gzip
 import hashlib
 import json
 import os
 import re
 import time
-import tomllib
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import cache
-from importlib import resources
 from types import MappingProxyType
 from typing import Any, cast
 from urllib.parse import unquote
@@ -54,9 +53,16 @@ TIERS = frozenset({
 })
 
 
+#: (drop, userinfo, rows, text, bearer): `bearer` is the line's why when the response IS a
+#: credential the caller must receive (a login link), so it is served whole and labelled.
+Rule = tuple[frozenset[str], frozenset[str], frozenset[str], bool, str | None]
+_NO_RULE: Rule = (frozenset(), frozenset(), frozenset(), False, None)
+
+
 @dataclass(frozen=True)
 class Row:
-    """One published address and everything known about governing it."""
+    """One published address and everything known about governing it: the one JSON's row. Every
+    column is computed by the build; the engine asks the row, never "which command is this?"."""
 
     product: str
     path: str
@@ -71,6 +77,15 @@ class Row:
     channel: str | None = None   # the sentence that classifies it; rides into the plan
     wire: str = "http"           # how the call is dialled: the vendor's API, or "ssh" (shell.toml)
     held: str | None = None      # a judged refusal: the sentence [tier.held] carries, read instead of a tier
+    lane: str | None = None      # the opt-in lane a gated row is served on: agent, shell, node or download
+    twin: str | None = None      # the GET at this path: UNDO's capture and the plan's current; gated, it is named
+    state: str | None = None     # the parent's /current an action is read through when no twin serves
+    expect: Mapping[str, Any] | None = None   # the state a power action aims at ({"status": "running"})
+    net: Mapping[str, str] | None = None      # a container command's snapshot and rollback addresses (shell.toml)
+    task_status: str | None = None            # where the plane reports a task this mutation submits
+    secret: Rule = _NO_RULE      # what the answer withholds: the own line merged with the read twin's
+    arg_secrets: frozenset[str] = frozenset()   # argument names the ledger fingerprints (a secret the caller sends)
+    creates: str | None = None   # a judged create (undo.toml): a failed read-back is absence, the restore its DELETE
 
     @property
     def address(self) -> str:
@@ -100,43 +115,25 @@ class Verdict:
     detail: dict[str, Any] = field(default_factory=dict)
 
 
+def row_of(r: Mapping[str, Any]) -> Row:
+    """One row of the one JSON (`proximo.json.gz`) as the engine governs it."""
+    x = r["secret"]
+    return Row(product=r["product"], path=r["path"], method=r["method"], access=r["access"],
+               excluded=r["excluded"], gate=r["gate"], params=MappingProxyType(r["params"]),
+               tier=r["tier"], why=r["why"], held=r["held"], untrusted=r["untrusted"],
+               channel=r["channel"], wire=r["wire"], lane=r["lane"], twin=r["twin"], state=r["state"],
+               expect=MappingProxyType(r["expect"]) if r["expect"] else None,
+               net=MappingProxyType(r["net"]) if r["net"] else None, task_status=r["task_status"],
+               secret=(frozenset(x["drop"]), frozenset(x["userinfo"]), frozenset(x["rows"]), x["text"], x["bearer"])
+               if x else _NO_RULE, arg_secrets=frozenset(r["arg_secrets"]), creates=r["creates"])
+
+
 @cache
 def table() -> Mapping[tuple[str, str, str], Row]:
-    """The governance table, keyed (product, method, path). Generated; never hand-edited."""
-    blob = resources.files("proximo.core").joinpath("table.json.gz").read_bytes()
-    rows = json.loads(gzip.decompress(blob))
-    rows += _shell_rows({(r["product"], r["method"], r["path"]) for r in rows})
-    tiers = _tiers()
-    untrusted = _untrusted()
-    out: dict[tuple[str, str, str], Row] = {}
-    for r in rows:
-        key = (r["product"], r["method"], r["path"])
-        addr = f'{r["product"]}:{r["method"]} {r["path"]}'   # Row.key, before the Row exists
-        fam = f'{r["product"]}:{family(r["path"])}'
-        # A family line opens only what a line may open: an ungated mutating address. Without
-        # this, the family's tier was stamped on every read, gated call and tunnel in the
-        # family too; govern() refused those first, but a plan printed "destructive" on a GET.
-        openable = r["access"] == "mutate" and not r["gate"] and not r["excluded"]
-        # A HELD address is judged, not opened: the sentence is what the plan prints, and no
-        # tier is stamped beside it (a family line that reaches it would read as a grant).
-        held = tiers["held"].get(addr) if openable else None
-        out[key] = Row(
-            product=r["product"], path=r["path"], method=r["method"],
-            access=r["access"], excluded=r["excluded"], gate=r["gate"],
-            params=MappingProxyType(r["params"]),
-            # ADDRESS BEATS FAMILY. A family is the broad judgement; a single address that is
-            # sharper (or safer) than its neighbours gets its own line and wins.
-            tier=None if held else (tiers["address"].get(addr) or (tiers["family"].get(fam) if openable else None)),
-            why=None if held else (tiers["why"].get(addr) or (tiers["why"].get(fam) if openable else None)),
-            held=held,
-            untrusted=addr in untrusted,
-            channel=untrusted.get(addr),
-            wire=r.get("wire", "http"),
-        )
-    _refuse_inert_keys(out, tiers)
-    _refuse_inert_untrusted(out, untrusted)
-    _refuse_inert_secrets(out)
-    _refuse_inert_arg_secrets(out)
+    """The governance table, keyed (product, method, path): every row of the one JSON, which
+    `scripts/build_proximo_json.py` builds from the vendor's schema and the authored records
+    (`records/`), refusing there any line that would do nothing. Generated; never hand-edited."""
+    out = {(r["product"], r["method"], r["path"]): row_of(r) for r in apitree.published()["rows"]}
     # READ-ONLY VIEW. `@cache` means every in-process door shares this object, so handing back
     # a plain dict let one caller write a tier into the authoritative table and authorize a
     # mutation for everything else in the process. A governance table nobody can reach into is
@@ -144,379 +141,19 @@ def table() -> Mapping[tuple[str, str, str], Row]:
     return MappingProxyType(out)
 
 
-def _refuse_inert_keys(rows: dict, tiers: dict) -> None:
-    """A tier key that matches no address is refused at load, never silently ignored.
-
-    The backends spell placeholders `{n}` and `{mid}`; the vendor table spells them `{node}` and
-    `{monid}`. A key carrying the wrong spelling matches nothing, the engine keeps refusing, and
-    the author believes they authored something. It fails CLOSED, so it is safe -- and that is
-    exactly why it would never be noticed. An authored line that does nothing is a lie the file
-    tells its reader.
-    """
-    live_addr = {f"{r.product}:{r.method} {r.path}" for r in rows.values()}
-    live_fam = {f"{r.product}:{family(r.path)}" for r in rows.values()}
-    # A held line reaches a row only where a grant could: a held read or tunnel refuses nothing
-    # the engine was not refusing already, and tells its reader it judged something.
-    openable = {r.key for r in rows.values() if r.access == MUTATE and not r.gate and not r.excluded}
-    inert = sorted([k for k in tiers["address"] if k not in live_addr]
-                   + [k for k in tiers["family"] if k not in live_fam]
-                   + [k for k in tiers["held"] if k not in openable])
-    if inert:
-        raise ProximoError(
-            f"tiers.toml names {len(inert)} key(s) that match no published address: "
-            f"{', '.join(inert[:5])}{' ...' if len(inert) > 5 else ''}. "
-            f"Check the placeholder spelling against the table (the vendor says {{node}}, not {{n}})."
-        )
-
-
-def is_agent_opt_in(product: str, path: str) -> bool:
-    """The guest-agent subtree: gated, but OPT-IN, not a hard wall. These rows are reachable when
-    the operator opts in (spine.agent_refusal), so for the record checks they count as openable —
-    a taint line or a tier line on one is NOT inert. One definition of the subtree, rawdoor's."""
-    return product == "pve" and path.startswith(rawdoor.AGENT_PREFIX)
-
-
-def opt_in_lane(row: Row) -> str | None:
-    """The opt-in lane a GATED row belongs to ("agent", "shell", "node"), or None for a hard gate. An
-    opt-in row is served when its operator switch and allowlist say so (spine.opt_in_refusal),
-    so the record checks count it as openable; a hard-gated row is never served."""
-    if row.wire == "ssh":
-        return shell.lane_of(row.path)
-    if rawdoor.is_stream(row.product, row.path):
-        return "download"
-    return "agent" if is_agent_opt_in(row.product, row.path) else None
-
-
-def _shell_rows(vendor: set[tuple[str, str, str]]) -> list[dict]:
-    """The container shell lane's AUTHORED rows (shell.toml), in the table's own row shape. The
-    load refuses a row the vendor also publishes (it would shadow the vendor), a method whose
-    access is not the one declared, and a row without params for its path placeholders."""
-    raw = resources.files("proximo.core").joinpath("shell.toml").read_bytes()
-    doc = tomllib.loads(raw.decode())
-    default_gate = doc.get("gate")
-    if not isinstance(default_gate, str) or not default_gate.strip():
-        raise ProximoError("shell.toml carries no gate sentence; its rows would read as ungated")
-    out, seen = [], set()
-    for r in doc.get("row", []):
-        if not isinstance(r.get("method"), str) or not isinstance(r.get("path"), str):
-            raise ProximoError(f"shell.toml: a row needs a method and a path, got {sorted(r)}")
-        key = ("pve", r["method"], r["path"])
-        sample = r["path"].replace("{node}", "n").replace("{vmid}", "1")
-        if r["method"] not in ("GET", "POST") or not shell.dialable(sample):
-            raise ProximoError(f"shell.toml: {r['method']} {r['path']} is not a call the ssh wire can dial "
-                               "(GET or POST, /nodes/{node}/lxc/{vmid}/<exec|psql|logs|probe>, "
-                               "/nodes/{node}/probe)")
-        gate = r.get("gate", default_gate)     # a row on another lane says its own words
-        if not isinstance(gate, str) or not gate.strip():
-            raise ProximoError(f"shell.toml: {r['method']} {r['path']} carries an empty gate sentence")
-        if key in seen:
-            raise ProximoError(f"shell.toml names {r['method']} {r['path']} twice")
-        seen.add(key)
-        if key in vendor:
-            raise ProximoError(f"shell.toml: the vendor now publishes {r['method']} {r['path']}; the "
-                               "authored row must move, it never shadows the vendor's")
-        want = READ if r["method"] == "GET" else MUTATE
-        if (r.get("access") != want or not set(placeholders(r["path"])) <= set(r.get("params", {}))
-                or not str(r.get("description", "")).strip()):
-            raise ProximoError(f"shell.toml: {r['method']} {r['path']} must declare access {want!r} and "
-                               "publish every path placeholder as a param and a description")
-        out.append({"product": "pve", "method": r["method"], "path": r["path"], "access": want,
-                    "excluded": False, "gate": gate, "params": r["params"], "tier": None, "wire": "ssh",
-                    "description": r["description"]})
-    return out
-
-
-def _refuse_inert_untrusted(rows: dict, untrusted: dict[str, str]) -> None:
-    """A taint line that matches no address, or matches one the engine refuses before any
-    pillar (a HARD `gate`d or excluded row), does nothing and tells the reader it did. Refused at
-    load. An OPT-IN gated row (the guest-agent lane) is served when the operator opts in, so a
-    taint line on one is live, not inert."""
-    live = {f"{r.product}:{r.method} {r.path}": r for r in rows.values()}
-    inert = sorted(k for k in untrusted if k not in live
-                   or (live[k].gate and opt_in_lane(live[k]) is None)
-                   or live[k].excluded)
-    if inert:
-        raise ProximoError(
-            f"taint.toml names {len(inert)} key(s) that match no address the engine serves: "
-            f"{', '.join(inert[:5])}{' ...' if len(inert) > 5 else ''}. "
-            f"A gated or tunnelled row is refused before taint is read; a line for it is inert."
-        )
-
-
 @cache
 def untrusted_addresses() -> frozenset[str]:
     """The record's keys, `plane:METHOD /path`: what `taint.is_adversarial` answers by address."""
-    return frozenset(_untrusted())
-
-
-def family(path: str) -> str:
-    """The 2-segment literal cut a tier is authored against: `/nodes/{node}/qemu/{vmid}` -> `/nodes/qemu`.
-
-    Placeholders are DROPPED, not counted, so `/nodes/{node}/qemu` and `/nodes/{node}/qemu/{vmid}/config`
-    share one family. Keys are PRODUCT-PREFIXED, so the 805 ungated mutating addresses (865 with
-    the gated ones) collapse to 197 families, not the 145 an unprefixed count gives -- the engine
-    keys on `product:family`, and quoting the unprefixed number understated the authoring job by 36%.
-    """
-    segs = [s for s in path.split("/") if s and not s.startswith("{")]
-    return "/" + "/".join(segs[:2])
-
-
-def _parse_creates(raw: bytes) -> dict[str, str]:
-    """`undo.toml`'s `[create]` table: the POSTs at an item path that CREATE the record the path
-    names, each with its sentence. A line promises an undo the engine will deliver, so it is
-    refused at load unless the address is a published, ungated POST with a published, ungated
-    GET (to read the record back) and DELETE (to put absence back) at the same path. Keyed on
-    the address, never the shape: a POST at an item path with both twins can still be an action
-    (a restore, a copy, a rule added to a group) whose "absent" would delete what was there."""
-    try:
-        parsed = tomllib.loads(raw.decode()).get("create", {})
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
-        raise ProximoError(f"undo.toml is not a readable TOML table ({type(exc).__name__}); every create at an "
-                           "item path is refused by UNDO until the record parses") from exc
-    if not isinstance(parsed, dict):
-        raise ProximoError("undo.toml: `create` names the [create] table")
-    out: dict[str, str] = {}
-    for key, value in parsed.items():
-        sentence = value.get("why") if isinstance(value, dict) else None
-        if not isinstance(sentence, str) or len(sentence.split()) < 4:
-            raise ProximoError(f"undo.toml: create line {key!r} is without a why; the sentence is the judgement")
-        product, _, address = key.partition(":")
-        method, _, path = address.partition(" ")
-        rows = table()
-        row = rows.get((product, method, path))
-        if row is None or row.excluded:
-            raise ProximoError(f"undo.toml: create line {key!r} matches no published address")
-        if method != "POST" or row.access != MUTATE or row.gate:
-            raise ProximoError(f"undo.toml: create line {key!r} is not a POST the door serves; a create is a POST")
-        for twin in ("GET", "DELETE"):
-            t = rows.get((product, twin, path))
-            need = "read the record back" if twin == "GET" else "put absence back"
-            if t is None or t.excluded or t.gate:
-                raise ProximoError(f"undo.toml: create line {key!r} has no {twin} {path} the door serves; "
-                                   f"without it UNDO cannot {need}")
-            # THE TWIN IS CALLED WITH THE PATH ALONE: the capture's read and the restore's delete
-            # send no arguments, so a twin that requires one would refuse at check_args every time
-            # and the line would promise an undo the engine never delivers.
-            asks = sorted(k for k, v in t.params.items() if not v.get("optional") and k not in placeholders(t.path))
-            if asks:
-                raise ProximoError(f"undo.toml: create line {key!r}: {twin} {path} requires {', '.join(asks)} beyond "
-                                   f"the path, and UNDO calls it with the path alone; it cannot {need}")
-        out[key] = sentence.strip()
-    return out
-
-
-@cache
-def _creates() -> dict[str, str]:
-    """The judged creates (`undo.toml`). Absent file = none judged = every create at an item path
-    keeps today's refusal when its read-back fails."""
-    try:
-        raw = resources.files("proximo.core").joinpath("undo.toml").read_bytes()
-    except (FileNotFoundError, ModuleNotFoundError, OSError):
-        return {}
-    return _parse_creates(raw)
-
-
-def is_create(row: Row) -> bool:
-    """Whether UNDO treats a failed read-back of `row` as absence (a line in undo.toml)."""
-    return row.key in _creates()
-
-
-@cache
-def _tiers() -> dict[str, dict[str, str]]:
-    """Authored blast-radius verdicts. Absent file = nothing authored = everything strict.
-
-    A line is `"plane:METHOD /path" = "tier"` or, the shipped form,
-    `"plane:METHOD /path" = { tier = "tier", why = "the human sentence" }`. The sentence is
-    what an operator reads at plan time: a grant is the tier, the reason to make it is the
-    sentence, and a file that carried only the word taught nobody anything.
-    """
-    try:
-        raw = resources.files("proximo.core").joinpath("tiers.toml").read_bytes()
-    except (FileNotFoundError, ModuleNotFoundError, OSError):
-        return {"address": {}, "family": {}, "why": {}, "held": {}}   # the SHAPE table() indexes, not a bare {}
-    try:
-        parsed = tomllib.loads(raw.decode()).get("tier", {})
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
-        raise ProximoError(f"tiers.toml is not a readable TOML table ({type(exc).__name__}): every mutation "
-                           "is refused until the record parses") from exc
-    raw_families, raw_held = parsed.get("family", {}), parsed.get("held", {})
-    if not isinstance(raw_families, dict) or not isinstance(raw_held, dict):
-        raise ProximoError(
-            "tiers.toml: `family` and `held` name the [tier.family] and [tier.held] sub-tables and "
-            f"cannot also be address keys (got {raw_families!r}, {raw_held!r})."
-        )
-    # [tier.held]: `"plane:METHOD /path" = { why = "..." }`. A judged refusal, no tier: the
-    # engine refuses the address with this sentence before arm is asked. A line that also
-    # carries a tier, or an address that is tiered AND held, is an ambiguity, refused whole.
-    held = {}
-    for key, value in raw_held.items():
-        v = value if isinstance(value, dict) else {}
-        sentence = v.get("why")
-        if "tier" in v:
-            raise ProximoError(f"tiers.toml: held line {key!r} carries a tier; a held address has a sentence, "
-                               "not a grant (move the line to [tier] to open it)")
-        if not isinstance(sentence, str) or len(sentence.split()) < 4:
-            raise ProximoError(f"tiers.toml: held line {key!r} is without a why; the sentence is the judgement")
-        held[key] = sentence.strip()
-    authored, families, why, bad = {}, {}, {}, {}
-    for scope, entries in (("address", {k: v for k, v in parsed.items() if k not in ("family", "held")}),
-                           ("family", dict(raw_families))):
-        for key, value in entries.items():
-            tier, sentence = value, None
-            if isinstance(value, dict):
-                tier, sentence = value.get("tier"), value.get("why")
-                if not isinstance(sentence, str) or not sentence.strip():
-                    bad[key] = value      # the table form exists to carry the sentence
-                    continue
-            if not isinstance(tier, str) or tier not in TIERS:
-                bad[key] = value
-                continue
-            (authored if scope == "address" else families)[key] = tier
-            if sentence:
-                why[key] = sentence.strip()
-    if bad:
-        raise ProximoError(
-            f"tiers.toml carries lines outside the vocabulary or without a why: {bad}. "
-            f"Valid tiers: {', '.join(sorted(TIERS))}; the table form needs a non-empty `why`."
-        )
-    if both := sorted(set(held) & set(authored)):
-        raise ProximoError(f"tiers.toml: {', '.join(both[:3])} is both held and tiered; one judgement per address")
-    return {"address": authored, "family": families, "why": why, "held": held}
-
-
-@cache
-def _untrusted() -> dict[str, str]:
-    """The untrusted-channel record: address -> the sentence that classifies it. Absent file =
-    nothing classified = the door taints nothing (the 0.44 wrappers stay the taint path). A
-    line is `"plane:METHOD /path" = { why = "the sentence" }`; a line without a why, or a file
-    that does not parse, refuses the whole table by name: a record that cannot be read cannot
-    say which reads taint, and guessing is the one thing a taint model must never do."""
-    try:
-        raw = resources.files("proximo.core").joinpath("taint.toml").read_bytes()
-    except (FileNotFoundError, ModuleNotFoundError, OSError):
-        return {}
-    try:
-        parsed = tomllib.loads(raw.decode()).get("untrusted", {})
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
-        raise ProximoError(f"taint.toml is not a readable TOML table ({type(exc).__name__}): every "
-                           "address is refused until the record parses") from exc
-    if not isinstance(parsed, dict):
-        raise ProximoError("taint.toml: `untrusted` must be a table of address lines")
-    out, bad = {}, {}
-    for key, value in parsed.items():
-        why = value.get("why") if isinstance(value, dict) else None
-        if not isinstance(why, str) or not why.strip():
-            bad[key] = value
-            continue
-        out[key] = why.strip()
-    if bad:
-        raise ProximoError(f"taint.toml carries lines without a why: {bad}. Every line is a classification "
-                           "and the sentence is the classification.")
-    return out
-
-
-#: (drop, userinfo, rows, text, bearer): `bearer` is the line's why when the response IS a
-#: credential the caller must receive (a login link), so it is served whole and labelled.
-Rule = tuple[frozenset[str], frozenset[str], frozenset[str], bool, str | None]
-
-
-@cache
-def _secrets() -> dict[str, Rule]:
-    """The secret record: address -> (fields withheld, URL fields whose userinfo is masked, the
-    `key` names of `{key, value}` rows whose values are withheld, whether a text body's
-    `password:` lines are masked).
-    FAILS CLOSED where taint.toml fails open: an absent taint record marks nothing, an absent
-    secret record would serve every credential it names, so absence, a parse failure, or a line
-    without a why or without a field refuses the table by name."""
-    try:
-        raw = resources.files("proximo.core").joinpath("secrets.toml").read_bytes()
-        parsed = tomllib.loads(raw.decode()).get("secret")
-    except (FileNotFoundError, ModuleNotFoundError, OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
-        raise ProximoError(f"secrets.toml cannot be read ({type(exc).__name__}): the door refuses every address "
-                           "rather than serve the credentials the record exists to withhold") from exc
-    if not isinstance(parsed, dict) or not parsed:
-        raise ProximoError("secrets.toml: `secret` must be a non-empty table of address lines")
-    out, bad = {}, {}
-    for key, value in parsed.items():
-        v = value if isinstance(value, dict) else {}
-        drop, urls, rows, text = v.get("drop", []), v.get("userinfo", []), v.get("rows", []), v.get("text", False)
-        why, bearer = v.get("why"), v.get("bearer", False)
-        if isinstance(v.get("args"), list) and not (drop or urls or rows or text is True or bearer is True):
-            continue  # an ARG-secret line (fingerprinted in the ledger, not a read strip); _arg_secrets() owns it
-        if (not isinstance(why, str) or not why.strip() or not (drop or urls or rows or text is True or bearer is True)
-                or not isinstance(text, bool) or not isinstance(bearer, bool)
-                or not all(isinstance(f, str) and f for f in [*drop, *urls, *rows])):
-            bad[key] = value
-            continue
-        out[key] = (frozenset(drop), frozenset(urls), frozenset(rows), text, why if bearer else None)
-    if bad:
-        raise ProximoError(f"secrets.toml carries lines without a why or a field: {bad}")
-    return out
-
-
-@cache
-def _arg_secrets() -> dict[str, frozenset[str]]:
-    """Argument names a mutation's ledger row must fingerprint, keyed on the mutation's OWN address
-    (`plane:METHOD /path`), from secrets.toml lines carrying an `args` list. The READ record
-    (`_secrets`) withholds a credential the vendor SENDS; this withholds one the caller SENDS (a
-    guest exec's argv and stdin, a file-write's content), which `_SECRET_NAME` does not match by
-    name. A line needs a non-empty `args` list of field names and a why, or it refuses the table."""
-    try:
-        parsed = tomllib.loads(resources.files("proximo.core").joinpath("secrets.toml").read_bytes().decode())
-        parsed = parsed.get("secret") or {}
-    except (FileNotFoundError, ModuleNotFoundError, OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
-        raise ProximoError(f"secrets.toml cannot be read ({type(exc).__name__})") from exc
-    out, bad = {}, {}
-    for key, value in parsed.items():
-        v = value if isinstance(value, dict) else {}
-        if "args" not in v:
-            continue
-        args, why = v.get("args"), v.get("why")
-        if (not isinstance(args, list) or not args or not all(isinstance(a, str) and a for a in args)
-                or not isinstance(why, str) or not why.strip()):
-            bad[key] = value
-            continue
-        out[key] = frozenset(args)
-    if bad:
-        raise ProximoError(f"secrets.toml carries arg-secret lines without a why or field names: {bad}")
-    return out
-
-
-def _refuse_inert_arg_secrets(rows: dict) -> None:
-    """An arg-secret line that names no mutating address the door serves fingerprints nothing and
-    tells its reader it did. The address must be a live, non-excluded mutation (gated or not: the
-    guest-agent lane is gated-opt-in and its exec/file-write are exactly these lines)."""
-    live = {r.key for r in rows.values() if r.access == MUTATE and not r.excluded}
-    inert = sorted(k for k in _arg_secrets() if k not in live)
-    if inert:
-        raise ProximoError(f"secrets.toml names arg-secret key(s) that match no mutation the door serves: "
-                           f"{', '.join(inert[:5])}{' ...' if len(inert) > 5 else ''}")
+    return frozenset(r.key for r in table().values() if r.untrusted)
 
 
 def arg_rule(row: Row) -> Rule:
     """The rule for ledgering a mutation's ARGUMENTS: the response rule's drops (a PUT that echoes
     its resource) UNION the arg-secret names for this row's own address, so a guest exec's argv and
     a file-write's content are fingerprinted in the executing row, never written raw."""
-    base = secret_rule(row)
-    extra = _arg_secrets().get(row.key, frozenset())
     # Arguments are never "a bearer": a token mint's own line labels its ANSWER the credential;
     # its arguments (a comment, an expiry) are receipted by name like any other.
-    return (base[0] | extra, base[1], base[2], base[3], None)
-
-
-def _refuse_inert_secrets(rows: dict) -> None:
-    """A secret line that names no published address the door serves withholds nothing and would
-    tell the reader it did (a placeholder spelled `{section}` where the vendor says `{profile}`).
-    A line is live on a read the door serves, or on a mutation it may open (a token mint's
-    one-time answer); never on a tunnel or a hard-gated byte stream."""
-    live = {r.key for r in rows.values() if not r.excluded and not r.held
-            and ((r.method == "GET" and not r.gate)
-                 or (r.access == MUTATE and (not r.gate or opt_in_lane(r) is not None)))}
-    inert = sorted(k for k in _secrets() if k not in live)
-    if inert:
-        raise ProximoError(f"secrets.toml names {len(inert)} key(s) that match no address the door answers "
-                           f"(a read it serves, or a mutation it may open; never a held, gated or tunnelled one): "
-                           f"{', '.join(inert[:5])}{' ...' if len(inert) > 5 else ''}")
+    return (row.secret[0] | row.arg_secrets, *row.secret[1:4], None)
 
 
 def resolve(product: str, method: str, path: str) -> Row:
@@ -535,7 +172,7 @@ def resolve(product: str, method: str, path: str) -> Row:
     # `GET /nodes/{node}` while httpx collapses it to `/backup`, an EXCLUDED protocol tunnel.
     # One copy of the rule, in the module that already owned it.
     rawdoor.reject_malformed(path, allow_placeholders=True)
-    published = apitree.find(product, rawdoor.canonical(path), method) or _find_authored(product, path, method)
+    published = apitree.find(product, rawdoor.canonical(path), method, wires=("http", "ssh"))
     row = table().get((product, method, published)) if published else None
     if row is None:
         nearest = apitree.nearest(product, path, method)[:5]
@@ -545,16 +182,6 @@ def resolve(product: str, method: str, path: str) -> Row:
             + _split_value_hint(path, nearest)
         )
     return row
-
-
-def _find_authored(product: str, path: str, method: str) -> str | None:
-    """The authored (shell.toml) template `path` reaches, matched the way apitree matches the
-    vendor's: the vendor's tree is asked first, so an authored row can never win over it."""
-    want = apitree.norm(rawdoor.canonical(path))
-    for (p, m, template), row in table().items():
-        if p == product and m == method and row.wire == "ssh" and apitree.matches(want, apitree.norm(template)):
-            return template
-    return None
 
 
 def _split_value_hint(path: str, nearest: list[str]) -> str:
@@ -605,7 +232,7 @@ def govern(row: Row, *, cfg: wire.Plane | None = None, path: str | None = None,
         # operator opts in and the guest is allowlisted. The opt-in is judged on the CONCRETE
         # VMID the path binds (a template path binds none and is refused, never matched `*`);
         # when it passes, the row falls through to arm, tier and the pillars like any mutation.
-        lane = opt_in_lane(row)
+        lane = row.lane
         if lane is not None:
             concrete = rawdoor.canonical(path) if (path and "{" not in path) else None
             bound = bind(row, concrete) if concrete else {}
@@ -710,9 +337,9 @@ def plan(row: Row, args: dict[str, Any] | None = None, path: str | None = None,
         gp = spine.grant_path(verdict.consent_id)
         if gp:
             out["grant_path"] = gp
-    if row.wire == "ssh" and "snapshot" in row.params and _snapshot_on(row, args):
+    if row.net and _snapshot_on(row, args):
         # ONE GRANT, TWO VENDOR MUTATIONS: the plan the operator approves says so (lens B5c-3).
-        snap = table()[("pve", "POST", "/nodes/{node}/lxc/{vmid}/snapshot")]
+        snap = _at(row.product, row.net["snapshot"])
         out["also"] = {"address": snap.address, "tier": snap.tier, "consent": "covered by this plan's grant",
                        "why": "snapshot=true takes the container's snapshot first; if it does not land, "
                               "the command is not run"}
@@ -720,7 +347,7 @@ def plan(row: Row, args: dict[str, Any] | None = None, path: str | None = None,
     # read of its twin (a login's GET) would dial the vendor for a call that will not run.
     if row.access != READ and verdict.needs not in ("arguments", "held"):
         out.update(_live_state(row, args, path, cfg, ledger_cfg, env))
-    if opt_in_lane(row) == "download" and verdict.allowed:
+    if row.lane == "download" and verdict.allowed:
         # where the bytes would land; nothing is dialled, and a refused lane learns no path (lens 3)
         try:
             lands_under, cap = download.settings()
@@ -731,43 +358,36 @@ def plan(row: Row, args: dict[str, Any] | None = None, path: str | None = None,
 
 
 # ---- PLAN's live state (B1) ---------------------------------------------------------------------
-# Two rules pick the read and nothing else: the GET twin the vendor publishes at the same path
-# and serves (543 of the 865 mutations across the four planes; one of those needs an argument
-# the path cannot give and is named, not read), else the `/current` beside a PVE power or HA
-# action (15: 13 guest power, 2 HA). Where neither exists the plan says so in the UNDO capture's
-# own words, so `current`
-# is never silently empty (a site on 0.44 reported a plan whose `current` was `{}`, 2026-09-29).
-# The read is `execute`'s: one seam for receipt, withhold, taint, the size law. `change` is the
-# exact from/to per argument, compared as strings (the vendor answers 2048, the operator sends
-# "2048", Proxmox booleans are 0/1); `noop` is the one branch 0.44 had (a start on a running
-# guest, arguments the target already holds). The blast engine's prose is not carried: the
-# tier's authored sentence is the blast radius that has authority.
+# The read is the row's `twin` (the GET at the same path; 543 of the 865 mutations) or its
+# `state` (the `/current` beside a PVE power or HA action; 15), both computed by the build. Where
+# neither exists the plan says so in the UNDO capture's own words, so `current` is never silently
+# empty (a site on 0.44 reported a plan whose `current` was `{}`, 2026-09-29). The read is
+# `execute`'s: one seam for receipt, withhold, taint, the size law. `change` is the exact from/to
+# per argument, compared as strings (the vendor answers 2048, the operator sends "2048", Proxmox
+# booleans are 0/1); `noop` is the one branch 0.44 had (a start on a running guest, arguments the
+# target already holds). The tier's authored sentence is the blast radius that has authority.
 
-_EXPECTED = {"start": "running", "stop": "stopped", "shutdown": "stopped", "resume": "running"}
 _ID_KEYS = ("id", "storage")      # identities the vendor enforces; a `name` is a display name
 
 
-def _twin_of(row: Row) -> tuple[Row | None, str | None, str | None, str | None]:
-    """The read that shows this target: (twin row, its published path, the action name when the
-    read is a power action's `/current`, why there is none). The read's path is the mutation's
-    own for a twin at the same path, or the parent's `/current`. A gated twin is named, not
+def _read_of(row: Row) -> tuple[Row | None, str | None, str | None, str | None]:
+    """The read that shows this target: (its row, its published path, the action name when the
+    read is the parent's `/current`, why there is none). A gated or tunnelled twin is named, not
     read (the UNDO capture's words)."""
     t = table()
-    twin = t.get((row.product, "GET", row.path))
+    twin = t[(row.product, "GET", row.twin)] if row.twin else None
     if twin is not None and not twin.excluded:
         if twin.gate:
             return None, None, None, f"the read of {row.path} is gated: {twin.gate}"
-        return twin, row.path, None, None
-    parent, _, action = row.path.rpartition("/")
-    cur = t.get((row.product, "GET", parent + "/current"))
-    if cur is not None and not cur.excluded and not cur.gate:
-        return cur, parent + "/current", action, None
+        return twin, row.twin, None, None
+    if row.state:
+        return t[(row.product, "GET", row.state)], row.state, row.path.rpartition("/")[2], None
     return None, None, None, f"{row.product} publishes no GET {row.path}"
 
 
 def _live_state(row: Row, args: dict[str, Any], path: str | None, cfg: wire.Plane | None,
                 ledger_cfg: Any, env: dict[str, Any] | None = None) -> dict[str, Any]:
-    twin, twin_path, action, why = _twin_of(row)
+    twin, twin_path, action, why = _read_of(row)
     if twin is None:
         return {"current": {"why": why}}
     if not path or "{" in path:
@@ -775,7 +395,7 @@ def _live_state(row: Row, args: dict[str, Any], path: str | None, cfg: wire.Plan
     needed = [k for k, v in twin.params.items() if not v.get("optional") and k not in placeholders(twin.path)]
     if needed:                             # a read the path alone cannot ask (pmg /quarantine/content needs id)
         return {"current": {"why": f"the read {twin.address} needs {', '.join(needed)}; not read"}}
-    concrete = path if twin_path == row.path else rawdoor.canonical(path).rpartition("/")[0] + "/current"
+    concrete = path if twin_path == row.path else fill(cast(str, twin_path), bind(row, path))
     if env is None:
         try:
             plane = cfg if cfg is not None else wire.Plane.from_env(row.product)
@@ -789,7 +409,7 @@ def _live_state(row: Row, args: dict[str, Any], path: str | None, cfg: wire.Plan
             err = wire_error(exc)
             if err.get("status") == 404 and row.method == "DELETE":
                 return {"current": {"exists": False, "why": err}, "change": {}, "noop": True}
-            if is_create(row):                 # a judged create: the record is not there yet (undo.toml)
+            if row.creates:                    # a judged create: the record is not there yet (undo.toml)
                 return {"current": {"creates": True, "exists": False, "read_back": err},
                         "change": {"creates": rawdoor.canonical(path)}, "noop": False}
             return {"current": {"why": err}}
@@ -827,12 +447,12 @@ def _diff(row: Row, args: dict[str, Any], path: str, data: Any, action: str | No
     the record already holds; an action with no arguments is never a no-op (lens 8: a PBS
     garbage collection read as one)."""
     if action is not None:
-        status = data.get("status") if isinstance(data, dict) else None
         current = (lean(data) if isinstance(data, dict) else summarize(data) if isinstance(data, list)
                    else {"data": data})
-        expected = _EXPECTED.get(action)
-        change = {"status": {"from": status, "to": expected}} if expected else {"action": action}
-        return {"current": spine.bound(current), "change": change, "noop": expected is not None and status == expected}
+        expect = dict(row.expect or {})
+        got = {k: (data.get(k) if isinstance(data, dict) else None) for k in expect}
+        change = {k: {"from": got[k], "to": v} for k, v in expect.items()} if expect else {"action": action}
+        return {"current": spine.bound(current), "change": change, "noop": bool(expect) and got == expect}
     if isinstance(data, list):
         if row.method != "POST":           # a PUT or DELETE whose read is the collection, not the target
             return {"current": {"collection": True, "total": len(data),
@@ -872,6 +492,21 @@ def intent_id(called: str) -> str:
 def placeholders(path: str) -> tuple[str, ...]:
     """The `{name}` segments of a published path, in order."""
     return tuple(seg[1:-1] for seg in path.split("/") if seg.startswith("{") and seg.endswith("}"))
+
+
+def fill(template: str, values: Mapping[str, Any]) -> str:
+    """`template` with every `{name}` given its value (a row's `state`, `net` or `task_status`
+    made concrete). A placeholder with no value is refused, never sent as a literal."""
+    out = re.sub(r"\{([^}]+)\}", lambda m: str(values[m.group(1)]) if m.group(1) in values else m.group(0), template)
+    if placeholders(out):
+        raise ProximoError(f"{template} needs values for {', '.join(placeholders(out))}")
+    return out
+
+
+def _at(product: str, address: str) -> Row:
+    """The row an authored `METHOD /path` address (a row's `net`) names on `product`."""
+    method, _, path = address.partition(" ")
+    return table()[(product, method, path)]
 
 
 def _given_twice(row: Row, bound: dict[str, str], args: dict[str, Any]) -> str | None:
@@ -971,7 +606,7 @@ def coerce_args(row: Row, args: dict[str, Any]) -> dict[str, Any]:
                 out[name] = False
             else:
                 raise ProximoError(
-                    f"{row.address}: {name}={ledgered(value, name, secret_rule(row))!r} is not a boolean "
+                    f"{row.address}: {name}={ledgered(value, name, row.secret)!r} is not a boolean "
                     f"the vendor would accept; use true/false"
                 )
         elif kind in ("integer", "number"):
@@ -981,7 +616,7 @@ def coerce_args(row: Row, args: dict[str, Any]) -> dict[str, Any]:
                 out[name] = int(value) if kind == "integer" else float(value)
             except ValueError:
                 raise ProximoError(
-                    f"{row.address}: {name}={ledgered(value, name, secret_rule(row))!r} is not a valid {kind}"
+                    f"{row.address}: {name}={ledgered(value, name, row.secret)!r} is not a valid {kind}"
                 ) from None
         else:
             out[name] = value
@@ -1065,7 +700,7 @@ def _built_client(row: Row, cfg: wire.Plane | None, ledger_cfg: Any, called: str
 def execute(row: Row, args: dict[str, Any] | None = None, *, cfg: wire.Plane | None = None,
             path: str | None = None, ledger_cfg: Any = None, fields: str | None = None,
             since: str | None = None, wait: int | None = None, restores: str | None = None,
-            net_of: tuple[str, str | None] | None = None) -> dict[str, Any]:
+            net_of: tuple[Row, str, str | None] | None = None) -> dict[str, Any]:
     """Run a governed address and hand back the vendor's data in a labelled envelope.
 
     THE GOVERNANCE RUNS HERE, NOT IN THE CALLER. A door cannot skip it by forgetting to ask:
@@ -1079,7 +714,7 @@ def execute(row: Row, args: dict[str, Any] | None = None, *, cfg: wire.Plane | N
     allowed on a task-status address alone and polls that address (0.44's pve_task_wait).
     `restores` is the id of the capture this mutation writes back (`proximo.core.undo`); it
     rides on the executing and terminal rows so the ledger links a restore to its capture.
-    `net_of` is (the container command a snapshot guards, that command's consent id), set by
+    `net_of` is (the container command's row, its called path, its consent id), set by
     `_snapshot_first` alone: the snapshot rides the command's consent, on its own container only,
     and its receipt names the grant that covered it.
     """
@@ -1092,7 +727,7 @@ def execute(row: Row, args: dict[str, Any] | None = None, *, cfg: wire.Plane | N
     # after the arguments validated, so a typo never spends a grant or a budget slot.
     remote = cfg.name if cfg is not None else None
     if net_of is not None:
-        _net_of_own_container(row, path, net_of[0])
+        _net_of_own_container(row, path, *net_of[:2])
     try:
         verdict = govern(row, cfg=cfg, path=path, args=args, ledger_cfg=ledger_cfg,
                          consent_covered=net_of is not None)
@@ -1153,7 +788,7 @@ def execute(row: Row, args: dict[str, Any] | None = None, *, cfg: wire.Plane | N
     # ProximoConfig here and handing it to the pbs backend crashed with "'ProximoConfig' object
     # has no attribute 'base_url'": pve's config was being passed to three clients that speak a
     # different shape. Each plane builds its own; the LEDGER keeps its own, estate-wide.
-    if opt_in_lane(row) == "download":
+    if row.lane == "download":
         return _download(row, called, args, cfg, ledger_cfg, remote, fields, since, wait)
     if row.access == READ and since is not None:
         return _recall(row, called, args, since, ledger_cfg, remote, cfg)
@@ -1221,7 +856,7 @@ def execute(row: Row, args: dict[str, Any] | None = None, *, cfg: wire.Plane | N
     # died" with nothing.
     preview = {"tier": row.tier, "args": ledgered(args, rule=arg_rule(row)), "consent_id": verdict.consent_id,
                "undo": undo, "intent": intent, **({"restores": restores} if restores else {}),
-               **({"consent_of": {"command": net_of[0], "consent_id": net_of[1]}} if net_of else {})}
+               **({"consent_of": {"command": net_of[1], "consent_id": net_of[2]}} if net_of else {})}
     _record(ledger_cfg, "core.execute", row, outcome=EXECUTING, detail=preview, called=called,
             required=True, remote=remote)
     _taint_before_the_wire(row, ledger_cfg, called, remote)
@@ -1265,11 +900,12 @@ def _capture_of(undo: dict[str, Any]) -> dict[str, str]:
 def _undo_before(row: Row, args: dict[str, Any], client: Any, called: str, cfg: Any, ledger_cfg: Any,
                  intent: str, remote: str | None, consent_id: str | None) -> dict[str, Any]:
     """The net taken before a mutation, or the receipt's words for why there is none (see execute)."""
-    twin = table().get((row.product, "GET", row.path))
-    if row.wire == "ssh" and args.get("snapshot") is True:
+    twin = table()[(row.product, "GET", row.twin)] if row.twin else None
+    if row.net and args.get("snapshot") is True:
         undo = _snapshot_first(row, called, cfg, ledger_cfg, intent, remote, consent_id)
     elif row.wire == "ssh":
-        undo = {"captured": False, "why": "a container command has no read-back; snapshot=true takes one first"}
+        undo = {"captured": False, "why": "a container command has no read-back"
+                + ("; snapshot=true takes one first" if row.net else "")}
     elif not spine.undo_enabled():
         undo = {"captured": False, "why": f"{spine.UNDO_ENV}=off"}
     elif twin is None or twin.excluded or twin.gate:
@@ -1278,14 +914,14 @@ def _undo_before(row: Row, args: dict[str, Any], client: Any, called: str, cfg: 
     else:
         try:
             before: dict[str, Any] = {"before": ledgered(spine.bound(client.call("GET", called, {})),
-                                                         rule=secret_rule(twin))}
+                                                         rule=twin.secret)}
         except Exception as exc:
             # A JUDGED CREATE'S FAILED READ-BACK IS ABSENCE, AS THE VENDOR SAID IT (undo.toml):
             # the record the path names is not there yet, and the restore is its DELETE. Not
             # proof: a read can fail over a record that IS there, so the restore sends the
             # DELETE only when the ledger shows this create landed (the vendor refuses a
             # duplicate). Any other address keeps the rule: no net, no risky act.
-            if not is_create(row):
+            if not row.creates:
                 reason = (f"undo unavailable: the read-back {twin.address} the vendor publishes could "
                           f"not be taken ({type(exc).__name__}); the mutation was not run")
                 _record(ledger_cfg, "core.refuse", row, outcome="refused",
@@ -1316,14 +952,19 @@ def _snapshot_on(row: Row, args: dict[str, Any]) -> bool:
         return False
 
 
-def _net_of_own_container(row: Row, path: str | None, net_of: str) -> None:
+def _net_of_own_container(row: Row, path: str | None, cmd: Row, called: str) -> None:
     """THE CONSENT EXEMPTION IS ONE SHAPE ONLY. The snapshot's own consent id hashes a fresh
     snapname, so no grant could ever be placed for it ahead, and under enforced consent
     snapshot=true could never pass (lens B5c). It rides the guarded command's consent instead,
-    and only as the vendor's container snapshot of THAT command's node and vmid."""
-    m = re.fullmatch(r"(/nodes/[A-Za-z0-9][A-Za-z0-9.-]*/lxc/\d+)/(?:exec|psql)", net_of)
-    if (m is None or (row.product, row.method, row.path) != ("pve", "POST", "/nodes/{node}/lxc/{vmid}/snapshot")
-            or path is None or rawdoor.canonical(path) != m.group(1) + "/snapshot"):
+    and only as the snapshot the command's own `net` names, of THAT command's node and vmid."""
+    try:
+        own = fill(row.path, bind(cmd, called))     # the snapshot row's OWN path on THAT command's node and vmid
+    except ProximoError:
+        own = None
+    # THE LITERAL PATH, not only the bound values: a bound comparison let the snapshot row be
+    # dialled at any path of the same shape on the same container with consent skipped (lens 3 F1).
+    if (not cmd.net or cmd.net["snapshot"] != f"{row.method} {row.path}"
+            or path is None or rawdoor.canonical(path) != own):
         raise ProximoError("a consent exemption covers only the snapshot guarding its own container command")
 
 
@@ -1338,10 +979,10 @@ def _snapshot_first(row: Row, called: str, cfg: Any, ledger_cfg: Any, intent: st
     anything short of a task that finished OK refuses the command before it runs. The capture
     names the snapshot and the vendor's rollback, so `undo <id>` puts the container back."""
     where = bind(row, rawdoor.canonical(called))
-    node, vmid = where["node"], where["vmid"]
-    snap = table()[("pve", "POST", "/nodes/{node}/lxc/{vmid}/snapshot")]
+    net = cast(Mapping[str, str], row.net)      # execute reaches here on `row.net and snapshot=true` alone
+    snap = _at(row.product, net["snapshot"])
     name = "proximo_" + time.strftime("%Y%m%dT%H%M%S", time.gmtime()) + "_" + os.urandom(2).hex()
-    path = f"/nodes/{node}/lxc/{vmid}/snapshot"
+    path = fill(snap.path, where)
 
     def refused(why: str, exc: BaseException | None = None) -> ProximoError:
         reason = f"undo unavailable: the snapshot before this command did not land ({why}); the command was not run"
@@ -1352,13 +993,14 @@ def _snapshot_first(row: Row, called: str, cfg: Any, ledger_cfg: Any, intent: st
 
     try:
         out = execute(snap, {"snapname": name, "description": f"before a governed command ({intent[:12]})"},
-                      cfg=cfg, path=path, ledger_cfg=ledger_cfg, wait=SNAPSHOT_WAIT, net_of=(called, consent_id))
+                      cfg=cfg, path=path, ledger_cfg=ledger_cfg, wait=SNAPSHOT_WAIT, net_of=(row, called, consent_id))
     except Exception as exc:
         raise refused(safe_exception_text(exc, paths=True), exc) from exc
     task = out.get("task") or {}
     if not task.get("succeeded"):
         raise refused(f"task {task.get('exitstatus') or task.get('status') or 'not seen to finish'}")
-    rollback = f"POST {path}/{name}/rollback"
+    method, _, template = net["rollback"].partition(" ")
+    rollback = f"{method} {fill(template, {**where, 'snapname': name})}"
     point = _record(ledger_cfg, "core.undo_point", row, outcome="undo_point",
                     detail={"snapshot": name, "rollback": rollback, "intent": intent, "tier": row.tier,
                             "plane": row.product, "upid": task.get("upid")},
@@ -1379,7 +1021,9 @@ def _task_of(client: Any, row: Row, called: str, upid: str, wait: int, ledger_cf
                 "timed_out": False, "polls": 0, "seconds": 0}
     if not spine.upid_node(upid):
         return {**unwaited, "why": "the id is not a UPID shape; not polled"}
-    status_path = _task_status_path(called, upid)
+    # the node from the UPID, never the path's (a cluster call's task runs where the vendor says);
+    # the remote (PDM) from the path the operator was allowed
+    status_path = fill(row.task_status or "", {**bind(row, called), "node": spine.upid_node(upid), "upid": upid})
     polls = [0]
     last: dict[str, Any] = {}
     t0 = spine._CLOCK()
@@ -1409,16 +1053,6 @@ def _task_of(client: Any, row: Row, called: str, upid: str, wait: int, ledger_cf
 
 
 TASK_WAIT_DEFAULT = 60
-
-
-def _task_status_path(called: str, upid: str) -> str:
-    """Where the plane reports on this task: PDM's remote form when the governed path is a
-    remote's (the remote from the PATH the operator was allowed, never from the UPID's prefix),
-    else the node's, the node from the UPID (every plane publishes `/nodes/{node}/tasks/{upid}/status`)."""
-    m = re.match(r"^/(pve|pbs)/remotes/([^/]+)/", called)
-    if m:
-        return f"/{m.group(1)}/remotes/{m.group(2)}/tasks/{upid}/status"
-    return f"/nodes/{spine.upid_node(upid)}/tasks/{upid}/status"
 
 
 def _task_wait(status_path: str, fetch: Any, upid: str | None, wait: int) -> dict[str, Any]:
@@ -1511,45 +1145,18 @@ def _mask_userinfo(text: str, *, url: bool = False) -> str:
     return f"{m.group('scheme') or ''}[redacted]@{host}{text[m.end('authority'):]}"
 
 
-_NO_RULE: Rule = (frozenset(), frozenset(), frozenset(), False, None)
-
-
-def secret_key(row: Row) -> str:
-    """The record key that governs `row`'s answer: the address's OWN line when the record carries
-    one (a token mint answers the secret ONCE, a shape its read never has: lens 2026-10-04 found
-    the one-time secrets of five newly opened mutations reaching the caller raw), else its READ
-    twin (a PUT that echoes its resource carries what the read carries)."""
-    return row.key if row.key in _secrets() else f"{row.product}:GET {row.path}"
-
-
-def secret_rule(row: Row) -> Rule:
-    """The secret record's rule for `row`: its OWN line merged with its read twin's (the twin's
-    drops still apply to a mutation that echoes its resource; lens 2 found an own bearer line
-    replacing the twin's `password` drop wholesale), bearer from the own line alone. The fields a
-    read withholds are credentials when a mutation sends them or UNDO captures them, and the
-    name rule alone misses the ones named like data (an ACME plugin's `data` is its DNS keys)."""
-    own = _secrets().get(row.key)
-    twin = _secrets().get(f"{row.product}:GET {row.path}") if row.method != "GET" else None
-    if own is None:
-        return twin or _NO_RULE
-    if twin is None:
-        return own
-    return (own[0] | twin[0], own[1] | twin[1], own[2] | twin[2], own[3] or twin[3], own[4])
-
-
 def _plan_rule(row: Row) -> Rule:
     """The secret rule a PLAN answer is held to: the address's and its twin's named fields and
     the name rule, WITHOUT the bearer clause. A bearer line says the mutation's ANSWER is a
     credential; a plan holds the read's state and the caller's arguments, never that answer, and
     fingerprinting it whole made a storage create's `exists` unreadable."""
-    rule = secret_rule(row)
-    return (*rule[:4], None)
+    return (*row.secret[:4], None)
 
 
 def ledgered(value: Any, name: str | None = None,
              rule: Rule = _NO_RULE) -> Any:
     """`value` as a receipt may carry it: secret-named keys and the record's fields (`rule`,
-    from `secret_rule`) fingerprinted, URL userinfo masked (strictly in the record's URL
+    the row's `secret`) fingerprinted, URL userinfo masked (strictly in the record's URL
     fields), recursively; every other shape byte for byte. Under a BEARER line the whole value
     is the credential (a login link), so the whole value is fingerprinted, at any depth: an
     UNDO capture of such a read, or the args of a mutation at its path, never lands raw."""
@@ -1573,7 +1180,7 @@ def _envelope(row: Row, called: str, data: Any, fields: str | None = None) -> di
     # shows, so its own line says bearer (served whole, labelled) or drops the echo.
     # WITHHOLD, then PROJECT, then BOUND: the withheld list names every credential the vendor
     # sent, even one projection would have dropped; the cap sees the projected size.
-    data, withheld = withhold(secret_key(row), data, rule=secret_rule(row))
+    data, withheld = withhold(data, row.secret)
     total = len(data) if isinstance(data, list) else None
     if row.access == READ:
         data = project(data, fields)
@@ -1612,7 +1219,7 @@ def _envelope(row: Row, called: str, data: Any, fields: str | None = None) -> di
         **({"withheld": withheld} if withheld else {}),   # the record's fields this response carried
         # a response that IS a credential is served whole (the caller asked for it) and says so;
         # the ledger never holds a read's bytes and the store keeps lists only, so it goes no further
-        **({"bearer_credential": b} if (b := secret_rule(row)[4]) else {}),
+        **({"bearer_credential": b} if (b := row.secret[4]) else {}),
     }
 
 
@@ -1703,7 +1310,7 @@ def _keep(row: Row, called: str, args: dict[str, Any], data: Any, ledger_cfg: An
     if not store.enabled() or not isinstance(data, list):
         return
     try:
-        rows, _ = withhold(f"{row.product}:GET {row.path}", data)
+        rows, _ = withhold(data, row.secret)
         records = [lean(r) for r in rows if isinstance(r, dict)]
         if rows and not records:
             return
@@ -1789,16 +1396,15 @@ def project(data: Any, fields: str | None) -> Any:
 _PASSWORD_LINE = re.compile(r"(?im)^(?P<head>[ \t-]*(?:plain_text_|hashed_)?passw(?:or)?d[ \t]*:[ \t]*)\S.*$")
 
 
-def withhold(key: str, data: Any, rule: Rule | None = None) -> tuple[Any, list[str]]:
-    """`data` with the record's credential fields for `key` removed (at any depth) and its URL
-    fields' userinfo masked; plus the sorted names actually withheld, for the envelope to say.
+def withhold(data: Any, rule: Rule) -> tuple[Any, list[str]]:
+    """`data` with the rule's credential fields removed (at any depth) and its URL fields'
+    userinfo masked; plus the sorted names actually withheld, for the envelope to say.
     Two shapes a field name cannot reach: a `{key, value, pending}` row (PVE's pending and
     cloud-init reads name the option in `key` and carry the secret in `value`), whose values
     are withheld when `key` is in the line's `rows`; and a text body (the rendered cloud-init
     user-data), whose `password:` lines are masked when the line says `text`.
-    An address the record does not name comes back untouched."""
-    rule = _secrets().get(key) if rule is None else rule    # `rule`: a merged one (secret_rule)
-    if rule is None or rule == _NO_RULE:
+    A row the record does not name (`_NO_RULE`) comes back untouched."""
+    if rule == _NO_RULE:
         return data, []
     drop, urls, rows, text, _bearer = rule
     seen: set[str] = set()

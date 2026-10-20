@@ -88,14 +88,9 @@ def _record(flags: list[str]) -> dict[str, Any]:
         flags.append(f"the record is refused, and every mutation with it: {(why := _said(exc))}")
         return {"refused": why}
     mutations = [r for r in rows if not r.excluded and r.access == engine.MUTATE
-                 and (not r.gate or engine.opt_in_lane(r) is not None)]
-    try:
-        creates: Any = len(engine._creates())
-    except ProximoError as exc:
-        flags.append(f"undo.toml is refused, and every judged create's UNDO with it: {(why := _said(exc))}")
-        creates = {"refused": why}
+                 and (not r.gate or r.lane is not None)]
     return {"rows": len(rows), "mutations": len(mutations), "tiered": sum(1 for r in mutations if r.tier),
-            "held": sum(1 for r in mutations if r.held), "creates": creates,
+            "held": sum(1 for r in mutations if r.held), "creates": sum(1 for r in rows if r.creates),
             "untrusted": sum(1 for r in rows if r.untrusted)}
 
 

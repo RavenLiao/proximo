@@ -84,7 +84,7 @@ def test_the_five_byte_streams_are_the_download_lane():
     for key in FIVE:
         plane, rest = key.split(":", 1)
         row = engine.resolve(plane, "GET", rest.split(" ", 1)[1])
-        assert row.gate and engine.opt_in_lane(row) == "download", key
+        assert row.gate and row.lane == "download", key
 
 
 def test_the_lane_is_off_by_default_and_the_refusal_names_the_switch(monkeypatch, cfg):
@@ -200,7 +200,7 @@ def test_a_plan_dials_nothing_and_names_the_landing_and_the_cap(lane, cfg, monke
 
 def test_the_quarantined_mail_is_untrusted_bytes():
     row = engine.resolve("pmg", "GET", "/quarantine/download")
-    assert row.untrusted and engine.opt_in_lane(row) == "download"
+    assert row.untrusted and row.lane == "download"
 
 
 def test_the_raw_get_door_still_refuses_every_stream():

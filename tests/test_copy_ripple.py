@@ -6,6 +6,8 @@ copy SHAPE. Canon: docs/plans/internal/COPY-CANON.md (internal-only).
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import copy_ripple_check  # noqa: E402
@@ -166,3 +168,79 @@ def test_satellite_must_carry_current_version():
     problems = copy_ripple_check.check_satellite_text("v0.1.0 is live", "0.2.0", "index.html")
     assert problems and "0.2.0" in problems[0]
     assert copy_ripple_check.check_satellite_text("v0.2.0 is live", "0.2.0", "x") == []
+
+
+_TABLE = (
+    "## Security controls\n\n"
+    "| Control | Defends against | Default | Turn on with |\n"
+    "|---|---|---|---|\n"
+    "| **PLAN** | a | On | n/a |\n"
+    "| **PROVE** | b | On | n/a |\n"
+    "| **TIER** | c | On | n/a |\n"
+    "\nFour more switches widen what Proximo can do.\n"
+    "| not | a control |\n"
+)
+_TILE = '<div class="stat"><div class="num">{n}</div><div class="label">trust controls</div></div>'
+
+
+def test_control_count_is_the_rows_of_securitys_table():
+    assert copy_ripple_check.canonical_control_count(_TABLE) == 3
+    assert copy_ripple_check.canonical_control_count("no table here") is None
+    head_only = "| Control | Defends against |\n|---|---|\n\ntext"
+    assert copy_ripple_check.canonical_control_count(head_only) is None
+
+
+def test_the_live_security_table_is_counted():
+    security = (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8")
+    rows = [line for line in security.splitlines() if line.startswith("| **")]
+    count = copy_ripple_check.canonical_control_count(security)
+    assert count is not None and count >= 6, "the six pillars alone are six rows"
+    assert count <= len(rows)
+
+
+def test_a_stale_control_tile_is_a_finding_and_a_true_one_is_not():
+    problems = copy_ripple_check.check_control_counts({"index.html": _TILE.format(n=13)}, 12)
+    assert problems and "13 trust controls" in problems[0] and "12 rows" in problems[0]
+    assert copy_ripple_check.check_control_counts({"index.html": _TILE.format(n=12)}, 12) == []
+
+
+def test_a_control_claim_in_prose_or_words_is_counted_too():
+    files = {"README.md": "Proximo ships thirteen trust controls.", "b.md": "13  trust\ncontrols"}
+    assert len(copy_ripple_check.check_control_counts(files, 12)) == 2
+    assert copy_ripple_check.check_control_counts({"r": "Twelve trust controls."}, 12) == []
+
+
+def test_a_control_claim_with_no_table_to_count_is_a_finding():
+    problems = copy_ripple_check.check_control_counts({"index.html": _TILE.format(n=12)}, None)
+    assert problems and "cannot be checked" in problems[0]
+
+
+def test_satellites_command_refuses_a_stale_control_tile(tmp_path, capsys):
+    count = copy_ripple_check.canonical_control_count(
+        (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8"))
+    page = tmp_path / "index.html"
+    page.write_text(f"v{CURRENT} " + _TILE.format(n=count + 1), encoding="utf-8")
+    assert copy_ripple_check._main(["satellites", str(page)]) == 1
+    assert "trust controls" in capsys.readouterr().err
+    page.write_text(f"v{CURRENT} " + _TILE.format(n=count), encoding="utf-8")
+    assert copy_ripple_check._main(["satellites", str(page)]) == 0
+
+
+# The lens on this rule (2026-10-19) read each of these stale 13s as clean.
+@pytest.mark.parametrize("stale", [
+    "13&nbsp;trust controls", "13 trust&#32;controls", "<div>trust controls</div><div>13</div>",
+    "**13** trust controls", "`13` trust controls", "1<b>3</b> trust controls", "13 trust-controls",
+    "13 security controls", "13 trust control", "13+ trust controls", "twenty-one trust controls",
+    "1,3 trust controls", "Trust Controls: 13",
+])
+def test_a_stale_control_count_is_read_however_it_is_spelled(stale):
+    assert copy_ripple_check.check_control_counts({"x": stale}, 12), stale
+
+
+@pytest.mark.parametrize("true", [
+    "12&nbsp;trust controls", "<!-- <b>13</b> trust controls --> 12 trust controls", "1<b>2</b> trust controls",
+    "trust controls 2026",
+    "12,000+ tests and 12 trust controls", "Security controls & defaults", "trust controls: twelve",
+])
+def test_a_true_or_countless_mention_is_not_a_finding(true):
+    assert copy_ripple_check.check_control_counts({"x": true}, 12) == [], true

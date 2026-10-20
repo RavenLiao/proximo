@@ -1,8 +1,8 @@
 """The container shell wire: `pct exec` over ssh, with the HTTP client's shape (B5, 2026-10-03).
 
 The vendor publishes no REST address for running a command inside a container, so 0.44 shelled
-out beside the API path. The core keeps ONE governed path: `shell.toml` puts the three calls in
-the table as rows, govern and the pillars treat them like any other, and only the wire differs.
+out beside the API path. The core keeps ONE governed path: `records/shell.toml` authors the calls
+as rows of the one JSON, govern and the pillars treat them like any other, and only the wire differs.
 `ShellClient.call(method, path, params)` answers the call `engine.execute` makes of every client.
 
 What this wire adds over 0.44's:

@@ -1,6 +1,6 @@
 """The tier RECORD: address-level only, honest about what it opens, and exact.
 
-`src/proximo/core/tiers.toml` is the hand-authored grant the engine loads: every line opens one
+`records/tiers.toml` is the hand-authored grant the engine is built from: every line opens one
 mutating address to an armed operator, with the sentence that justifies it. It was generated
 once from the thin mutation wrappers' own plan functions; those wrappers and their generator
 retired together (2026-09-23), so the file is the record now. These tests pin what three lens
@@ -11,12 +11,17 @@ from __future__ import annotations
 
 import pathlib
 import re
+import sys
 
 import pytest
 
 from proximo.core import engine
 
-HARVESTED = pathlib.Path(__file__).resolve().parent.parent / "src" / "proximo" / "core" / "tiers.toml"
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+import build_proximo_json as bj  # noqa: E402
+
+HARVESTED = ROOT / "records" / "tiers.toml"
 
 #: pbs 81 · pve 53 · pmg 16 (destructive 38 · disruptive 79 · restorable 33) on 2026-09-23.
 #: 152 on 2026-09-25: John's first two hand grants, LXC start and shutdown (restorable), so the
@@ -48,9 +53,7 @@ def test_the_record_carries_the_family_lines_john_ruled():
     assert len(parsed.pop("family")) == EXACT_FAMILY
     parsed.pop("held")
     assert len(parsed) == EXACT_GRANT
-    engine._tiers.cache_clear()
-    engine.table.cache_clear()
-    engine.table()   # the loader's refusals (unpublished family, bad tier, blank why) are this test's
+    bj.build(*bj.read_inputs()[:2])   # the build's refusals (unpublished family, bad tier, blank why) are this test's
 
 
 def test_the_record_names_only_addresses_the_table_holds_and_is_exact():
@@ -105,7 +108,7 @@ def test_no_grant_is_inert():
     exists, it just cannot be reached."""
     live = {f"{r.product}:{r.method} {r.path}": r for r in engine.table().values()}
     inert = [k for k, _t, _s in _harvested()
-             if k in live and ((live[k].gate and engine.opt_in_lane(live[k]) is None)
+             if k in live and ((live[k].gate and live[k].lane is None)
                                or live[k].excluded or live[k].access != "mutate")]
     assert not inert, inert[:5]
 
@@ -131,24 +134,12 @@ def test_every_why_is_a_sentence_not_a_fragment():
     assert not short, short[:3]
 
 
-def test_a_record_that_does_not_parse_refuses_every_mutation_by_name(monkeypatch):
+def test_a_record_that_does_not_parse_refuses_every_mutation_by_name(records):
     """Lens 5: `tomllib` raises on a duplicate key, and the loader's narrow except let that
     traceback out of `govern` instead of a refusal that names the file. A record that cannot be
     read grants nothing, and says so."""
     from proximo.core.errors import ProximoError
 
-    class _Garbage:
-        def joinpath(self, _name):
-            return self
-
-        def read_bytes(self):
-            line = b'"pbs:DELETE /x" = { tier = "destructive", why = "%s" }\n'
-            return b"[tier]\n" + line % b"a" + line % b"b"      # a duplicate key: TOML refuses it
-
-    monkeypatch.setattr(engine.resources, "files", lambda _pkg: _Garbage())
-    engine._tiers.cache_clear()
-    try:
-        with pytest.raises(ProximoError, match="tiers.toml is not a readable TOML table"):
-            engine._tiers()
-    finally:
-        engine._tiers.cache_clear()
+    line = '"pbs:DELETE /x" = { tier = "destructive", why = "%s" }\n'
+    with pytest.raises(ProximoError, match="tiers.toml is not a readable TOML table"):
+        records(**{"tiers.toml": "[tier]\n" + line % "a" + line % "b"})      # a duplicate key: TOML refuses it

@@ -32,5 +32,5 @@ plane in both stores.
 
 `docs/arena.md` lists 20 published mutations refused on purpose, each with a sentence (login
 tickets, the node's `execute`, the cluster join). Opening one is a line moved in
-`src/proximo/core/tiers.toml` and shipped; there is no switch. That is the design, recorded
+`records/tiers.toml`, rebuilt and shipped; there is no switch. That is the design, recorded
 here because it reads like a gap when a plan answers `needs: "held"`.

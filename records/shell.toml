@@ -1,17 +1,22 @@
 # shell.toml -- the container shell lane's rows (B5, 2026-10-03; the probe row B3, 2026-10-04)
 #
 # The vendor publishes no REST address for `pct exec`, so these rows are AUTHORED, not
-# generated. `engine.table()` adds them beside the vendor's table with `wire = "ssh"` and the
+# generated. The build adds them beside the vendor's rows with `wire = "ssh"` and the
 # gate below; from there they are governed like every other row (opt-in, arm, tier, ledger,
 # taint, withhold, the doors). Their tiers, taint and secret lines live in tiers.toml,
 # taint.toml and secrets.toml, one source per record, keyed on the same `plane:METHOD /path`.
 #
 # The paths sit in the vendor's own container tree so `find` reaches them where a model looks.
-# THE LOAD REFUSES a row the vendor's table also publishes: if a future PVE ships one of these
+# THE BUILD REFUSES a row the vendor's table also publishes: if a future PVE ships one of these
 # addresses, the authored row must move; it never shadows the vendor.
 #
 # params use the vendor schema's shape (type / optional / description); the path placeholders
 # are published like the vendor publishes them.
+#
+# `net` names UNDO's net for a command run with snapshot=true: the vendor's own snapshot of the
+# container, taken first and waited, and the rollback `undo <id>` sends. The build refuses a net
+# whose addresses are not mutations the door serves on the command's own container, a `snapshot`
+# parameter without a net, and a net without one; the engine reads the row's `net`, never a literal.
 
 gate = "the container shell lane: opt-in, PROXIMO_ENABLE_EXEC and PROXIMO_CT_ALLOWLIST (0.44's ct_exec, ct_psql, ct_logs)"
 
@@ -20,6 +25,7 @@ method = "POST"
 path = "/nodes/{node}/lxc/{vmid}/exec"
 access = "mutate"
 description = "Run a command inside a container (pct exec over ssh): an argv list, run as root; answers returncode, stdout and stderr. Opt-in: PROXIMO_ENABLE_EXEC and PROXIMO_CT_ALLOWLIST."
+net = { snapshot = "POST /nodes/{node}/lxc/{vmid}/snapshot", rollback = "POST /nodes/{node}/lxc/{vmid}/snapshot/{snapname}/rollback" }
 [row.params.node]
 type = "string"
 optional = false
@@ -42,6 +48,7 @@ method = "POST"
 path = "/nodes/{node}/lxc/{vmid}/psql"
 access = "mutate"
 description = "Run SQL with psql inside a container, as the postgres OS user, stopping on the first error. Opt-in: PROXIMO_ENABLE_EXEC and PROXIMO_CT_ALLOWLIST."
+net = { snapshot = "POST /nodes/{node}/lxc/{vmid}/snapshot", rollback = "POST /nodes/{node}/lxc/{vmid}/snapshot/{snapname}/rollback" }
 [row.params.node]
 type = "string"
 optional = false

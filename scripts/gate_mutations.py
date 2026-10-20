@@ -93,7 +93,7 @@ M = [
      '    if expected_head is not None and prev != expected_head:',
      '    if False:'),
     ('M16-WITHHOLD', E,
-     '    if rule is None or rule == _NO_RULE:\n        return data, []',
+     '    if rule == _NO_RULE:\n        return data, []',
      '    if True:\n        return data, []'),
     ('M17-PLACEHOLDERS', E,
      '    if placeholders(called):\n        raise ProximoError(',

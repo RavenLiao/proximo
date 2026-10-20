@@ -32,7 +32,7 @@ CLASSES = (
 def classify(row: engine.Row) -> str:
     if row.excluded:
         return "tunnel"
-    lane = engine.opt_in_lane(row) if row.gate else None
+    lane = row.lane
     if row.gate and lane is None:
         return "stream"
     if lane == "download":

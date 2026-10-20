@@ -20,6 +20,7 @@ import pytest
 from proximo.core import engine, shell
 from proximo.core.doors import mcp as door
 from proximo.core.errors import ProximoError
+from test_tiers_harvest import bj  # the shell rows are built, with their checks, by the build
 
 NODE = "pve1"
 CT = "101"
@@ -93,7 +94,7 @@ def test_the_shell_rows_are_in_the_table_and_dialled_over_ssh():
 def test_a_shell_row_the_vendor_also_publishes_refuses_the_load():
     vendor = {("pve", "POST", "/nodes/{node}/lxc/{vmid}/exec")}
     with pytest.raises(ProximoError, match="vendor now publishes"):
-        engine._shell_rows(vendor)
+        bj.shell_rows((bj.RECORDS / "shell.toml").read_text(), vendor)
 
 
 # --- default off: unset = refused, armed or not, nothing reaches ssh -----------------------------
@@ -337,32 +338,19 @@ def test_over_the_cap_the_exit_code_survives_and_each_stream_says_it_was_cut(box
     '[[row]]\nmethod = "POST"\npath = "/nodes/{node}/lxc/{vmid}/rm"\naccess = "mutate"\n',
     '[[row]]\nmethod = "POST"\npath = "/nodes/{node}/qemu/{vmid}/exec"\naccess = "mutate"\n',
 ])
-def test_the_load_refuses_a_row_the_wire_could_not_dial(monkeypatch, bad):
+def test_the_load_refuses_a_row_the_wire_could_not_dial(bad):
     # Lens B L4: the load accepted a DELETE, an unknown op, a path outside the wire's grammar.
     params = ('description = "d"\n[row.params.node]\ntype = "string"\n[row.params.vmid]\ntype = "integer"\n')
     doc = 'gate = "g"\n' + bad + params
-    monkeypatch.setattr(engine.resources, "files", lambda pkg: _Blob(doc))
     with pytest.raises(ProximoError, match="shell.toml"):
-        engine._shell_rows(set())
+        bj.shell_rows(doc, set())
 
 
-def test_the_load_refuses_a_duplicate_row(monkeypatch):
+def test_the_load_refuses_a_duplicate_row():
     row = ('[[row]]\nmethod = "GET"\npath = "/nodes/{node}/lxc/{vmid}/logs"\naccess = "read"\ndescription = "d"\n'
            '[row.params.node]\ntype = "string"\n[row.params.vmid]\ntype = "integer"\n')
-    monkeypatch.setattr(engine.resources, "files", lambda pkg: _Blob('gate = "g"\n' + row + row))
     with pytest.raises(ProximoError, match="twice"):
-        engine._shell_rows(set())
-
-
-class _Blob:
-    def __init__(self, text):
-        self.text = text
-
-    def joinpath(self, name):
-        return self
-
-    def read_bytes(self):
-        return self.text.encode()
+        bj.shell_rows('gate = "g"\n' + row + row, set())
 
 
 def test_psql_runs_as_postgres_with_the_sql_as_one_quoted_argument(box, monkeypatch):

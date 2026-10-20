@@ -22,7 +22,7 @@ the consent id with its grant path), then in `execute` the consent consume and
 the RATE reservation, the UNDO read-back, an `executing` row before the wire and its terminal
 partner after. That is every pillar the 0.44 server ran at its seams, for every published
 address rather than for the wrappers that remembered to call them, and ARM for every mutation
-where 0.44 armed three shell tools. `tiers.toml` ships the ratified grant (150 addresses, each
+where 0.44 armed three shell tools. `records/tiers.toml` authors the ratified grant (150 addresses, each
 with the sentence that justifies it; the file is the hand-authored record); every other
 mutating address is refused even when armed. TAINT keys on addresses (`taint.toml`: the mail
 quarantine, tracker and log reads and their kin): this door marks the session before serving

@@ -1,5 +1,5 @@
 """Every address whose vendor RETURN schema names a credential-shaped field: the second source
-of `src/proximo/core/secrets.toml`, generated so a guard can hold the record to it. Every method:
+of `records/secrets.toml`, generated so a guard can hold the record to it. Every method:
 until 2026-10-04 this scanned GETs alone, and two lenses found the class it left out, a MUTATION
 whose answer is a one-time secret its read never shows (a token mint's value, a second factor's
 recovery codes, an auto-generated storage encryption key).

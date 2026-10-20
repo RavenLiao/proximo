@@ -97,13 +97,13 @@ def test_a_record_that_does_not_parse_is_the_first_thing_the_doctor_says(box, mo
     assert "planes" in r and "ledger" in r                                  # it went on
 
 
-def test_a_bad_undo_record_is_named_the_same_way(box, monkeypatch):
-    def boom():
-        raise ProximoError("undo.toml: create line 'x' is without a why")
-    monkeypatch.setattr(engine, "_creates", boom)
+def test_a_bad_undo_record_refuses_the_build_and_the_report_counts_the_judged_creates(box, records):
+    """A create line without its why never ships: the build refuses it by name, so the report has
+    no undo.toml of its own to flag; it counts the judged creates the rows carry."""
+    with pytest.raises(ProximoError, match="undo.toml: create line .* without a why"):
+        records(**{"undo.toml": '[create]\n"pve:POST /access/users/{userid}/token/{tokenid}" = { why = "short" }\n'})
     r = _report()
-    assert r["record"]["creates"] == {"refused": "undo.toml: create line 'x' is without a why"}
-    assert any("undo.toml" in f for f in r["flags"])
+    assert r["record"]["creates"] == 5 and not any("undo.toml" in f for f in r["flags"])
 
 
 # --- the planes ----------------------------------------------------------------------------------
@@ -411,14 +411,6 @@ def test_a_located_record_refusal_is_repeated_without_the_locator(box, monkeypat
     assert MARK not in json.dumps(r) and "box.invalid" not in json.dumps(r)
     assert r["record"] == {"refused": "refused: <path> is not readable, see <path> and <url>"}
     assert any("the record is refused" in f and "<path>" in f for f in r["flags"])
-
-
-def test_a_located_undo_record_refusal_is_repeated_without_the_locator(box, monkeypatch):
-    monkeypatch.setattr(engine, "_creates", _raises)
-    r = _report()
-    assert MARK not in json.dumps(r)
-    assert r["record"]["creates"] == {"refused": "refused: <path> is not readable, see <path> and <url>"}
-    assert any("undo.toml is refused" in f and "<path>" in f for f in r["flags"])
 
 
 def test_a_located_registry_refusal_is_repeated_without_the_locator(box, monkeypatch, tmp_path):

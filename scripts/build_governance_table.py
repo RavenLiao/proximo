@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Generate the governance table: every published Proxmox address, governed, from the vendor schema.
+"""Generate the vendor stage: every published Proxmox address, governed, from the vendor schema.
 
 THE TABLE IS GENERATED, NEVER HAND-EDITED. Governance that a human retypes is governance that
 drifts; the whole point of keying on the vendor's own schema is that coverage tracks the vendor
-instead of tracking whoever last had time. `tests/test_engine.py` cross-checks the committed
-artifact against `proximo.core.apitree` (a SECOND independently vendored source) so a stale table is a
-red test, not a silent 61%.
+instead of tracking whoever last had time. It writes `records/vendor.json.gz`, which
+`scripts/build_proximo_json.py` joins with the authored records into the one JSON the package
+ships; `tests/test_engine.py` pins the per-product operation counts, so a generator that drops
+addresses is a red test, not a silent 61%.
 
 Sources are the four api-viewer `apidoc.js` files named in `proximo.core.apitree.SOURCES`. They are
 NOT vendored (15.7 MB); this reads a local cache and `--fetch` refreshes it.
@@ -25,8 +26,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
 from proximo.core import apitree, rawdoor  # noqa: E402
 
-OUT = (pathlib.Path(__file__).resolve().parent.parent
-       / "src" / "proximo" / "core" / "table.json.gz")
+OUT = pathlib.Path(__file__).resolve().parent.parent / "records" / "vendor.json.gz"
 
 
 def fetch(cache: pathlib.Path) -> None:
@@ -128,6 +128,8 @@ def build(cache: pathlib.Path) -> list[dict]:
                     },
                     # THE ONLY HUMAN-AUTHORED COLUMN. None = untiered = strictest handling.
                     "tier": None,
+                    # The vendor's sentence for the address: what `find` ranks on.
+                    "description": " ".join((info.get("description") or "").split()),   # one line, as find ranks it
                 })
     rows.sort(key=lambda r: (r["product"], r["path"], r["method"]))
     return rows

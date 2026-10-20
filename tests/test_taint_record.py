@@ -1,4 +1,4 @@
-"""The untrusted-channel RECORD: `src/proximo/core/taint.toml`, address-level, exact, and read by
+"""The untrusted-channel RECORD: `records/taint.toml`, address-level, exact, and read by
 the engine as `Row.untrusted`/`Row.channel`.
 
 The 0.44 module classified tools by NAME; the door serves addresses, so the classification
@@ -18,8 +18,9 @@ import pytest
 
 from proximo.core import engine
 from proximo.core.errors import ProximoError
+from test_tiers_harvest import bj  # the record is built, with its checks, by the build
 
-RECORD = pathlib.Path(__file__).resolve().parent.parent / "src" / "proximo" / "core" / "taint.toml"
+RECORD = pathlib.Path(__file__).resolve().parent.parent / "records" / "taint.toml"
 
 #: pmg 34 · pve 29 · pbs 21 · pdm 5 on 2026-09-23 (the 0.44 ADVERSARIAL_TOOLS' addresses), + 14
 #: pve guest-agent reads on 2026-10-03 (B5: the agent lane is opt-in now, not a hard wall, so its
@@ -39,7 +40,7 @@ def test_the_record_is_exact_and_names_only_addresses_the_engine_serves():
     assert not (set(keys) - set(live)), sorted(set(keys) - set(live))[:5]
     # an OPT-IN gated row (the guest-agent lane) is served when the operator opts in, so a taint
     # line on one is live, not inert; a HARD gate or a tunnel still is.
-    inert = [k for k in keys if (live[k].gate and engine.opt_in_lane(live[k]) is None)
+    inert = [k for k in keys if (live[k].gate and live[k].lane is None)
              or live[k].excluded]
     assert not inert, inert[:5]
     assert len(keys) == EXACT_LINES, f"the record holds {len(keys)} lines, the pin says {EXACT_LINES}"
@@ -73,21 +74,9 @@ def test_the_engine_reads_the_record_onto_the_row():
     (b'"pve:GET /nodes/{node}/syslog" = { why = "" }\n', "without a why"),
     (b'"pve:GET /nodes/{node}/syslog" = "yes"\n', "without a why"),
 ])
-def test_a_record_that_cannot_be_read_refuses_the_table_by_name(monkeypatch, body, match):
-    class _Garbage:
-        def joinpath(self, _name):
-            return self
-
-        def read_bytes(self):
-            return b"[untrusted]\n" + body
-
-    monkeypatch.setattr(engine.resources, "files", lambda _pkg: _Garbage())
-    engine._untrusted.cache_clear()
-    try:
-        with pytest.raises(ProximoError, match=match):
-            engine._untrusted()
-    finally:
-        engine._untrusted.cache_clear()
+def test_a_record_that_cannot_be_read_refuses_the_table_by_name(body, match):
+    with pytest.raises(ProximoError, match=match):
+        bj.untrusted((b"[untrusted]\n" + body).decode())
 
 
 def test_a_line_for_an_address_the_engine_never_serves_is_refused_at_load(monkeypatch):
@@ -95,13 +84,23 @@ def test_a_line_for_an_address_the_engine_never_serves_is_refused_at_load(monkey
     and says it did. Since 2026-10-04 every gated row is a lane (agent, shell, node, download),
     so the hard gate is manufactured on a live row; a tunnel is still a real excluded row."""
     rows = dict(engine.table())
-    assert not [r for r in rows.values() if r.gate and engine.opt_in_lane(r) is None]
+    assert not [r for r in rows.values() if r.gate and r.lane is None]
     tunnel = next(f"{r.product}:{r.method} {r.path}" for r in rows.values() if r.excluded)
     with pytest.raises(ProximoError, match="match no address the engine serves"):
-        engine._refuse_inert_untrusted(rows, {tunnel: "a sentence [tool]"})
+        bj.refuse_inert_untrusted(rows, {tunnel: "a sentence [tool]"})
     key = ("pve", "GET", "/version")
     planted = {**rows, key: engine.Row(**{**rows[key].__dict__, "gate": "a planted hard gate"})}
     with pytest.raises(ProximoError, match="match no address the engine serves"):
-        engine._refuse_inert_untrusted(planted, {"pve:GET /version": "a sentence [tool]"})
+        bj.refuse_inert_untrusted(planted, {"pve:GET /version": "a sentence [tool]"})
     with pytest.raises(ProximoError, match="match no address the engine serves"):
-        engine._refuse_inert_untrusted(rows, {"pve:GET /nodes/{n}/syslog": "the wrong placeholder [tool]"})
+        bj.refuse_inert_untrusted(rows, {"pve:GET /nodes/{n}/syslog": "the wrong placeholder [tool]"})
+
+
+def test_the_build_itself_refuses_an_inert_taint_line(records):
+    """Not the function: the BUILD. A lens found `build()` green with its `refuse_inert_untrusted`
+    call deleted, because every test drove the function directly."""
+    real = bj.read_inputs()[1]["taint.toml"]
+    line = '"pve:GET /nodes/{node}/not-a-thing" = { why = "a sentence for an address nobody publishes [lens]" }'
+    inert = real + "\n" + line + "\n"
+    with pytest.raises(ProximoError, match="taint.toml names 1 key"):
+        records(**{"taint.toml": inert})

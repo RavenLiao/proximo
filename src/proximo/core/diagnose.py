@@ -10,7 +10,7 @@ fields the vendor publishes. The battery is a record (`diagnose.toml`): a subjec
 index address (`/nodes/{node}`, `/nodes/{node}/lxc/{vmid}`, `/nodes/{node}/qemu/{vmid}`), so a
 concrete path resolves to it like any read and binds the probes' placeholders; a probe that
 names an address the table does not publish as a GET, ungated or on an opt-in lane, refuses the
-load, never silently serves two sections of three.
+build (and the load re-checks), never silently serves two sections of three.
 
 Nothing is composed from memory, and nothing incomplete is quiet. A probe the vendor fails or
 the spine refuses is a section with the reason and a flag that says the diagnosis is
@@ -44,15 +44,13 @@ text is neither OK nor a WARNINGS line). The task classifier is 0.44's rule in t
 from __future__ import annotations
 
 import math
-import tomllib
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
-from importlib import resources
 from typing import Any
 
-from proximo.core import engine, rawdoor, shell, spine, wire
+from proximo.core import apitree, engine, rawdoor, shell, spine, wire
 from proximo.core.errors import ProximoError
 from proximo.core.secretfile import safe_exception_text, safe_text
 from proximo.core.spine import wire_error
@@ -83,10 +81,6 @@ class Subject:
     probes: Mapping[str, Probe]
 
 
-def _text() -> str:
-    return resources.files("proximo.core").joinpath("diagnose.toml").read_text(encoding="utf-8")
-
-
 def _check_flag(flag: Any, key: str, probe: str) -> None:
     where = f"diagnose.toml: flag on probe {probe} of {key}"
     if not isinstance(flag, dict) or not isinstance(flag.get("says"), str) or not flag["says"]:
@@ -108,15 +102,23 @@ def _check_flag(flag: Any, key: str, probe: str) -> None:
 
 @cache
 def subjects() -> Mapping[str, Subject]:
+    """The battery from the one JSON, checked against the table (`compile`, the same check the
+    build ran on `records/diagnose.toml`), in the record's own order."""
+    return compile(apitree.published()["diagnose"], {r.key: r for r in engine.table().values()})
+
+
+def compile(section: list[dict[str, Any]], live: Mapping[str, Any]) -> Mapping[str, Subject]:
     """The record, checked against the table: every subject and every probe is a published GET,
-    ungated or on an opt-in lane (`engine.opt_in_lane`, the rows `govern` serves when the operator
-    opts in), or the load refuses (tiers.toml's rule: an authored line that matches nothing is a
-    lie the file tells its reader). A lane that is off is judged at run, as a refused section."""
-    raw = tomllib.loads(_text()).get("subject") or {}
-    live = {r.key: r for r in engine.table().values()}
+    ungated or on an opt-in lane (the row's `lane`, the rows `govern` serves when the operator
+    opts in), or the build refuses (tiers.toml's rule: an authored line that matches nothing is a
+    lie the file tells its reader). A lane that is off is judged at run, as a refused section.
+    `section` is the one JSON's `diagnose` list (a subject per entry, its probes a list, so the
+    authored order rides through sorted keys); `live` is the table keyed by `Row.key`. Pure, so
+    the build refuses a bad record before it ships and the load refuses a damaged file."""
     out: dict[str, Subject] = {}
     inert: list[str] = []
-    for key, spec in raw.items():
+    for spec in section:
+        key = spec["key"]
         plane, _, _address = key.partition(":")
         if key not in live or live[key].method != "GET" or live[key].gate or live[key].excluded:
             inert.append(key)
@@ -125,17 +127,20 @@ def subjects() -> Mapping[str, Subject]:
                                f"is a sentence")
         probes: dict[str, Probe] = {}
         own = set(engine.placeholders(_address.split(" ", 1)[1])) if " " in _address else set()
-        for name, p in (spec.get("probe") or {}).items():
-            pkey = f"{plane}:GET {p.get('path')}"
+        for p in spec.get("probe") or []:
+            name = p["name"]
+            if not isinstance(p.get("path"), str) or not p["path"]:
+                raise ProximoError(f"diagnose.toml: probe {name} of {key} names no path")
+            pkey = f"{plane}:GET {p['path']}"
             row = live.get(pkey)
-            if (row is None or (row.gate and engine.opt_in_lane(row) is None) or row.excluded
+            if (row is None or (row.gate and row.lane is None) or row.excluded
                     or row.access != engine.READ):
                 inert.append(pkey)
             # A PROBE IS BOUND FROM THE SUBJECT'S PATH AND NOTHING ELSE: a placeholder the subject
             # does not carry would go to the wire as a literal `{storage}`, so it refuses at load;
             # a parameter the probe does not publish would be refused by `check_args` at every
             # run, a line that can never do what it says.
-            extra = set(engine.placeholders(p.get("path", ""))) - own
+            extra = set(engine.placeholders(p["path"])) - own
             if extra:
                 raise ProximoError(f"diagnose.toml: probe {name} of {key} names placeholders the subject cannot "
                                    f"bind: {', '.join(sorted(extra))}")
@@ -255,8 +260,7 @@ def _concrete(probe: Probe, bound: dict[str, str]) -> str:
 
 
 def _lane_of(plane: str, probe: Probe) -> str | None:
-    prow = engine.resolve(plane, "GET", probe.path)
-    return engine.opt_in_lane(prow) if prow.gate else None
+    return engine.resolve(plane, "GET", probe.path).lane
 
 
 def _closed_lanes(plane: str, sub: Subject, bound: dict[str, str], plane_cfg: wire.Plane,

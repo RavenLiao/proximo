@@ -5,7 +5,7 @@
 # a GET the vendor publishes about that subject, bound from the subject's own placeholders, the
 # fields the answer keeps, and the advisory flags: thresholds on the fields the vendor publishes,
 # with the sentence a flag says. A probe whose address the table does not publish as an ungated
-# GET refuses the load (`diagnose.subjects`), never silently does nothing; an opt-in lane's row
+# GET refuses the build (`diagnose.compile`, run again at load), never silently does nothing; an opt-in lane's row
 # (the shell lanes' `.../probe`) loads, and a lane its probes cannot reach at run (off, or a
 # registered target, or no ssh target) is one skipped line and an incomplete diagnosis. Flags are signals, not a root cause (0.44's posture); the
 # thresholds are 0.44's own. `shell` names a half that is not here; a subject with none omits it.

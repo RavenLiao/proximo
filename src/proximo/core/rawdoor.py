@@ -12,7 +12,7 @@ Three laws keep it a door and not a hole:
      qemu-agent family behind PROXIMO_ENABLE_AGENT and its allowlist; the byte streams that
      the file-restore tools land on disk under a cap), the door refuses and names the tool.
      Where a curated read stripped a credential (a remote's password, an ACME plugin's DNS
-     keys), `core/secrets.toml` withholds the same field here and the envelope says so.
+     keys), `records/secrets.toml` withholds the same field here and the envelope says so.
   3. It never invents. The result is the vendor's `data` in a labelled envelope
      (`derived: false`, the published path it matched); a body over the byte cap is reported
      as truncated with its size, never handed back as a silent prefix.
@@ -49,7 +49,7 @@ _GATED: dict[str, tuple[tuple[str, str], ...]] = {
         (
             # The raw GET door still points here; the engine serves this subtree through the
             # opt-in (spine.agent_refusal), so the operator sees the opt-in sentence, not this.
-            # The string is unchanged from the committed table.json.gz, which stays byte-built.
+            # The string is unchanged from the committed vendor stage, which stays byte-built.
             AGENT_PREFIX,
             "pve_agent_* (PROXIMO_ENABLE_AGENT and PROXIMO_AGENT_ALLOWLIST gate every guest-agent read)",
         ),

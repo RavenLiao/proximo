@@ -1,7 +1,8 @@
 # THE FIND VOCABULARY. Hand-authored; a why on every line, and the why quotes the vendor.
 #
 # proximo_find matches the words of a question against three things the vendor publishes: the
-# path's segments, the operation's own description (apidoc/*.desc.json) and its parameter names.
+# path's segments, the operation's own description (the one JSON's `description` column) and its
+# parameter names.
 # The words below are the ones an operator says that no path spells: a guest is `qemu` or `lxc`,
 # never `guest`. Each line maps a word to the path words it means, and is admitted only because
 # the vendor's own text uses the word that way. A synonym written because a search missed is a

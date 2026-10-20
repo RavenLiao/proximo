@@ -131,7 +131,7 @@ def test_every_core_module_imports(dotted):
 
 TREE = sorted(p for d in ("src", "tests", "scripts") for p in (ROOT / d).rglob("*.py") if "__pycache__" not in p.parts)
 _ON_PATH = [str(TESTS), str(ROOT / "scripts")]           # what pytest and the scripts' own sys.path.insert give them
-_NOT_A_MODULE = re.compile(r"\.(env|sh|json|toml|service|log|md|py|txt|yml|yaml|db|pem|jwk|token|crt|example)$")
+_NOT_A_MODULE = re.compile(r"\.(env|sh|json|gz|toml|service|log|md|py|txt|yml|yaml|db|pem|jwk|token|crt|example)$")
 
 
 def _module_exists(dotted: str) -> bool:

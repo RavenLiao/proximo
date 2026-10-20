@@ -16,6 +16,7 @@ import pytest
 from proximo.core import apitree, engine, search
 from proximo.core.doors import mcp as door
 from proximo.core.errors import ProximoError
+from test_tiers_harvest import bj  # the records, built with their checks
 
 BENCH = json.loads((pathlib.Path(__file__).parent / "fixtures" / "find-bench-0.44.json").read_text())
 
@@ -125,21 +126,29 @@ def test_every_synonym_means_a_word_the_table_spells():
     b'[synonym]\nguest = { means = ["qemu"] }\n',
     b'[synonym]\nguest = { means = [], why = "x y z" }\n',
 ])
-def test_a_synonym_without_a_why_or_a_meaning_is_refused(monkeypatch, body):
-    class _File:
-        def joinpath(self, _name):
-            return self
+def test_a_synonym_without_a_why_or_a_meaning_is_refused(records, body):
+    """The BUILD refuses it (the records fixture is the real build); the wheel never carries it."""
+    with pytest.raises(ProximoError, match="without a why or a meaning"):
+        records(**{"vocab.toml": body.decode()})
 
-        def read_text(self):
-            return body.decode()
 
-    monkeypatch.setattr(search.resources, "files", lambda _pkg: _File())
-    search.synonyms.cache_clear()
-    try:
-        with pytest.raises(ProximoError, match="without a why or a meaning"):
-            search.synonyms()
-    finally:
-        search.synonyms.cache_clear()
+def test_a_planted_synonym_reaches_find():
+    """THE CONTROL on the plumbing: a word planted in the record is served by `synonyms()`. Red when
+    `synonyms` is missing from the caches the fixture clears (the stale real vocabulary would answer)."""
+    real = (bj.RECORDS / "vocab.toml").read_text()
+    assert "\nhost = " not in real
+    vendor, texts, _ = bj.read_inputs()
+    doc = bj.build(vendor, {**texts, "vocab.toml": real + '\nhost = { means = ["nodes"], why = "control [lens]" }\n'})
+    assert search.compile_vocab(doc["vocab"])["host"] == frozenset({"nodes"})
+
+
+def test_a_planted_synonym_is_served_through_the_fixture(records):
+    """The cache is PRIMED with the real vocabulary first; the plant must still be what is served.
+    Without the priming this passed with `synonyms` missing from the fixture's cache list."""
+    assert "host" not in search.synonyms()
+    real = (bj.RECORDS / "vocab.toml").read_text()
+    records(**{"vocab.toml": real + '\nhost = { means = ["nodes"], why = "control [lens]" }\n'})
+    assert search.synonyms()["host"] == frozenset({"nodes"})
 
 
 # --- plan acts on words: it must never land on a different address -------------------------------
@@ -184,3 +193,18 @@ def test_plan_on_words_gives_a_choice_rather_than_a_guess():
     out = door.plan("pdm", "POST", "create subscription keys")
     assert "address" not in out
     assert ("POST", "/subscriptions/keys") in [(m["method"], m["path"]) for m in out["matches"]]
+
+
+def test_the_stopword_cache_is_cleared_with_every_other_cache_built_from_the_table(monkeypatch):
+    """Lens 2 on D3 (L2-1): `_stopwords` is built from `_index` and was not in the fixture's cache
+    list, so a plant that put a filler word in a path segment left the stale set in place."""
+    import functools
+
+    from conftest import _clear_data_caches
+
+    assert "the" in search._stopwords()                         # primed: the real table spells no /the/
+    row = next(iter(engine.table().values()))
+    index = ((row, frozenset({"the"}), frozenset(), frozenset()),)
+    monkeypatch.setattr(search, "_index", functools.cache(lambda: index))
+    _clear_data_caches()
+    assert "the" not in search._stopwords(), "the stopword cache survived the clear"

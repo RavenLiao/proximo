@@ -1,3 +1,15 @@
+proximo (0.46.0-1) UNRELEASED; urgency=medium
+
+  * Track upstream 0.46.0 (minor: one JSON. The package carries one data file,
+    proximo.json.gz, built from records/ by scripts/build_proximo_json.py;
+    every load-time record check is a build refusal; the engine reads the
+    row's columns instead of special-casing commands; table.json.gz and
+    apidoc/ are gone from the wheel. Door contract 1: docs/door-contract.json
+    is the MCP door's promise to any client, held by a test. The copy gate
+    reads SECURITY.md's control table.)
+
+ -- John Broadway <271895126+john-broadway@users.noreply.github.com>  Tue, 20 Oct 2026 03:30:00 +0000
+
 proximo (0.45.1-1) UNRELEASED; urgency=medium
 
   * Track upstream 0.45.1 (patch: a TLS failure names itself. Issue #90: a

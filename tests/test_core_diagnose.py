@@ -30,9 +30,14 @@ import pytest
 from proximo.core import diagnose, engine, shell, spine, wire
 from proximo.core.doors import mcp as door
 from proximo.core.errors import ProximoError
+from test_tiers_harvest import bj  # the records, built with their checks
 
 FX = json.loads((pathlib.Path(__file__).parent / "fixtures" / "diagnose-pve.json").read_text())
 NODE = "/nodes/pve1"
+
+
+def _record() -> str:
+    return (bj.RECORDS / "diagnose.toml").read_text()
 LXC = "/nodes/pve1/lxc/1201"
 QEMU = "/nodes/pve1/qemu/101"
 # B3: with the shell lane off (these tests leave PROXIMO_ENABLE_EXEC unset) the lane is judged once,
@@ -109,54 +114,41 @@ def test_every_probe_in_the_record_is_a_published_get_ungated_or_opt_in_and_the_
         for probe in sub.probes.values():
             row = t[(plane, "GET", probe.path)]
             assert row.access == engine.READ and not row.excluded
-            assert not row.gate or engine.opt_in_lane(row) in ("shell", "node")   # the two shell lanes
+            assert not row.gate or row.lane in ("shell", "node")   # the two shell lanes
             assert set(engine.placeholders(probe.path)) <= set(engine.placeholders(address.split(" ", 1)[1]))
 
 
-def test_a_probe_naming_an_unpublished_address_refuses_the_load(monkeypatch):
+def test_a_probe_naming_an_unpublished_address_refuses_the_load(records):
     """THE CONTROL on the record: an authored line that matches nothing is a lie the file tells
-    its reader (tiers.toml's rule). The load refuses; it never silently serves two probes of three."""
-    bad = diagnose._text().replace('path = "/nodes/{node}/storage"', 'path = "/nodes/{node}/storages"')
-    monkeypatch.setattr(diagnose, "_text", lambda: bad)
-    diagnose.subjects.cache_clear()
-    try:
-        with pytest.raises(ProximoError, match=r"diagnose.toml.*match no published.*/nodes/\{node\}/storages"):
-            diagnose.subjects()
-    finally:
-        diagnose.subjects.cache_clear()
+    its reader (tiers.toml's rule). The BUILD refuses (the records fixture is the real build); it
+    never silently ships two probes of three."""
+    bad = _record().replace('path = "/nodes/{node}/storage"', 'path = "/nodes/{node}/storages"')
+    assert bad != _record()
+    with pytest.raises(ProximoError, match=r"diagnose.toml.*match no published.*/nodes/\{node\}/storages"):
+        records(**{"diagnose.toml": bad})
 
 
-def test_a_probe_the_subject_cannot_bind_or_a_parameter_it_does_not_publish_refuses_the_load(monkeypatch):
+@pytest.mark.parametrize("broken, fixed, match", [
+    ('path = "/nodes/{node}/storage"', 'path = "/nodes/{node}/storage/{storage}/status"', "cannot bind: storage"),
+    ('params = { limit = 50 }', 'params = { limit = 50, colour = "red" }', "does not publish: colour"),
+])
+def test_a_probe_the_subject_cannot_bind_or_a_parameter_it_does_not_publish_refuses_the_load(records, broken,
+                                                                                            fixed, match):
     """A probe is bound from the subject's own placeholders: `{storage}` under `/nodes/{node}` would
     reach the wire as a literal, and a parameter the probe does not publish would be refused by
-    `check_args` on every run. Both are lines that can never do what they say; the load refuses."""
-    original = diagnose._text()
-    for broken, fixed, match in (
-        ('path = "/nodes/{node}/storage"', 'path = "/nodes/{node}/storage/{storage}/status"', "cannot bind: storage"),
-        ('params = { limit = 50 }', 'params = { limit = 50, colour = "red" }', "does not publish: colour"),
-    ):
-        text = original.replace(broken, fixed, 1)
-        assert text != original
-        monkeypatch.setattr(diagnose, "_text", lambda t=text: t)
-        diagnose.subjects.cache_clear()
-        try:
-            with pytest.raises(ProximoError, match=match):
-                diagnose.subjects()
-        finally:
-            diagnose.subjects.cache_clear()
+    `check_args` on every run. Both are lines that can never do what they say; the build refuses."""
+    text = _record().replace(broken, fixed, 1)
+    assert text != _record()
+    with pytest.raises(ProximoError, match=match):
+        records(**{"diagnose.toml": text})
 
 
-def test_a_flag_with_no_sentence_or_an_unknown_shape_refuses_the_load(monkeypatch):
-    original = diagnose._text()
+def test_a_flag_with_no_sentence_or_an_unknown_shape_refuses_the_load(records):
     for broken in ('says = "node memory at {pct}%"', 'over = ["memory.used", "memory.total"]'):
-        text = original.replace(broken, 'x = 1', 1)
-        monkeypatch.setattr(diagnose, "_text", lambda t=text: t)
-        diagnose.subjects.cache_clear()
-        try:
-            with pytest.raises(ProximoError, match="diagnose.toml"):
-                diagnose.subjects()
-        finally:
-            diagnose.subjects.cache_clear()
+        text = _record().replace(broken, 'x = 1', 1)
+        assert text != _record()
+        with pytest.raises(ProximoError, match="diagnose.toml"):
+            records(**{"diagnose.toml": text})
 
 
 # --- the node battery ---------------------------------------------------------------------------
@@ -607,18 +599,12 @@ def test_n1_rows_that_lack_every_named_field_are_read_again_raw_not_reported_as_
     assert t["by_outcome"] == {"running": 3} and t["seen"] == 3 and "error" not in t
 
 
-def test_n3_a_sentence_that_cannot_render_refuses_the_load(monkeypatch):
-    original = diagnose._text()
-    for bad in ('says = "x {"', 'says = "{}"', 'says = "{pct.b}"', 'says = "{pct[x]}"'):
-        text = original.replace('says = "node memory at {pct}%"', bad, 1)
-        assert text != original
-        monkeypatch.setattr(diagnose, "_text", lambda t=text: t)
-        diagnose.subjects.cache_clear()
-        try:
-            with pytest.raises(ProximoError, match="does not render"):
-                diagnose.subjects()
-        finally:
-            diagnose.subjects.cache_clear()
+@pytest.mark.parametrize("bad", ['says = "x {"', 'says = "{}"', 'says = "{pct.b}"', 'says = "{pct[x]}"'])
+def test_n3_a_sentence_that_cannot_render_refuses_the_load(records, bad):
+    text = _record().replace('says = "node memory at {pct}%"', bad, 1)
+    assert text != _record()
+    with pytest.raises(ProximoError, match="does not render"):
+        records(**{"diagnose.toml": text})
 
 
 # --- LENS 2 FOLD (sonnet, 2026-10-02, 1 BLOCKING in the lens 1 fold) ---------------------------------
@@ -646,15 +632,13 @@ def test_b1_rows_that_carry_none_of_the_batterys_fields_are_an_unevaluated_secti
     assert out["battery"]["tasks"]["error"]["why"].startswith("2 of 2 rows carry none")
 
 
-def test_n3_a_legal_numeric_format_spec_loads_and_an_attribute_on_a_word_does_not(monkeypatch):
-    original = diagnose._text()
-    text = original.replace('says = "node memory at {pct}%"', 'says = "node memory at {pct:d}%"', 1)
-    monkeypatch.setattr(diagnose, "_text", lambda t=text: t)
-    diagnose.subjects.cache_clear()
-    try:
-        assert "pve:GET /nodes/{node}" in diagnose.subjects()
-    finally:
-        diagnose.subjects.cache_clear()
+def test_n3_a_legal_numeric_format_spec_loads_and_an_attribute_on_a_word_does_not(records):
+    """The planted record is SERVED, not just built: `subjects()` reads the planted sentence back."""
+    text = _record().replace('says = "node memory at {pct}%"', 'says = "node memory at {pct:d}%"', 1)
+    assert text != _record()
+    records(**{"diagnose.toml": text})
+    flags = diagnose.subjects()["pve:GET /nodes/{node}"].probes["status"].flags
+    assert any(f["says"] == "node memory at {pct:d}%" for f in flags)
 
 
 # --- LENS 3 FOLD (sonnet, 2026-10-02, 1 BLOCKING, pre-existing from the build) -------------------------
