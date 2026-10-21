@@ -213,6 +213,24 @@ def test_a_capture_this_door_would_not_write_rolls_nothing_back(box, monkeypatch
     assert not any("rollback" in c[1] for c in api.calls)
 
 
+@pytest.mark.parametrize("target", [
+    f"/nodes/{NODE}/lxc/abc/exec",            # the vendor's vmid is an integer; `{vmid}` matched a word
+    f"/nodes/{NODE}/lxc/{CT}/exec/",          # not the row's own spelling (a trailing slash)
+    f"/nodes/pv%65%31/lxc/{CT}/exec",         # not the row's own spelling (an encoded node)
+])
+def test_a_capture_whose_target_is_not_a_container_commands_own_spelling_rolls_nothing_back(box, monkeypatch, target):
+    """Lens 3 F3: `_rollback` resolved the target by template, so a forged ledger-verified capture
+    at `/lxc/abc/exec` sent `POST .../lxc/abc/snapshot/p_a/rollback`; `bind` took any string for `{vmid}`.
+    The target must be the row's template filled with its own bound values, the vmid the vendor's
+    integer. A real capture typed with an encoded node is refused too; that is owned."""
+    api, _ = _wire(monkeypatch)
+    vm = target.split("/")[4]
+    ref = _forged({"snapshot": "p_a", "rollback": f"POST /nodes/{NODE}/lxc/{vm}/snapshot/p_a/rollback"}, target)
+    with pytest.raises(ProximoError, match="roll back|refused"):
+        undo.restore(ref, cfg=box, confirm=True)
+    assert not any("rollback" in c[1] for c in api.calls)
+
+
 def test_a_rollback_on_a_ledger_that_does_not_verify_is_refused(box, monkeypatch):
     api, _ = _wire(monkeypatch)
     ref = _exec(box, snapshot=True)["undo"]["id"]

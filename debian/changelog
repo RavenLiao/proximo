@@ -1,3 +1,18 @@
+proximo (0.46.1-1) UNRELEASED; urgency=medium
+
+  * Track upstream 0.46.1 (patch: every column and every rollback target held
+    to its rule. The loader refuses a proximo.json.gz whose columns break a
+    rule the build keeps (a lane on an ungated row, a state beside a served
+    twin, a mutation with no task to poll, a net off its own container) and
+    asks the vendor's rows before the shell lane's whatever the file's order.
+    An undo rolls a container back only to a target that round-trips through
+    the engine's own rule (bound, coerced to the vendor's types, refilled and
+    compared to the capture's spelling). Tests that could not fail, fixed;
+    1,738 tests. Door contract 1 unchanged. certifi 2026.5.20 -> 2026.10.19
+    past PYSEC-2026-4320, the compromised emSign intermediate CA keys.)
+
+ -- John Broadway <271895126+john-broadway@users.noreply.github.com>  Wed, 21 Oct 2026 00:45:00 +0000
+
 proximo (0.46.0-1) UNRELEASED; urgency=medium
 
   * Track upstream 0.46.0 (minor: one JSON. The package carries one data file,

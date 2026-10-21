@@ -113,7 +113,7 @@ def build_app(request):
 
 #: Every cache built from the one JSON, cleared together so a planted record reaches every reader.
 _DATA_CACHES = (
-    ("proximo.core.apitree", ("published", "raw_tree", "tree")),
+    ("proximo.core.apitree", ("published", "raw_tree", "tree", "_rows")),
     ("proximo.core.engine", ("table", "untrusted_addresses")),
     ("proximo.core.search", ("descriptions", "_index", "synonyms", "_stopwords")),
     ("proximo.core.diagnose", ("subjects",)),

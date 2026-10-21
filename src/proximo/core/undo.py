@@ -205,14 +205,20 @@ def _rollback(ref: str, entry: dict, detail: dict, lines: list[str], lcfg: Any, 
     default, armed and tiered to run, receipted, its task's outcome reported as it went. The
     rollback address is rebuilt from the row's own spelling, never taken as written."""
     target, name = entry.get("target") or "", str(detail.get("snapshot") or "")
+    # THE TARGET IS THE ROW'S OWN SPELLING. A template matched `/lxc/abc/exec` and the rollback
+    # went to `/lxc/abc/...` (lens 3 F3): the bound values must be the vendor's types (an
+    # integer vmid) and fill the template back to exactly the target, so a trailing slash or
+    # an encoded node in a capture is refused, as the consent exemption refuses them.
     try:
         cmd = engine.resolve("pve", "POST", target) if target else None
+        bound = engine.coerce_args(cmd, engine.bind(cmd, target)) if cmd is not None else None
     except ProximoError:
-        cmd = None
-    if cmd is None or not cmd.net or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,39}", name):
+        cmd = bound = None
+    if (cmd is None or bound is None or engine.fill(cmd.path, bound) != target or not cmd.net
+            or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,39}", name)):
         raise ProximoError(f"capture {ref} names no container snapshot this door can roll back")
     method, _, template = cmd.net["rollback"].partition(" ")   # the command's own net, never a literal
-    path = engine.fill(template, {**engine.bind(cmd, target), "snapname": name})
+    path = engine.fill(template, {**bound, "snapname": name})
     if detail.get("rollback") != f"{method} {path}":
         raise ProximoError(f"capture {ref}'s rollback address does not match its own target; refused")
     row = engine.table().get(("pve", method, template))

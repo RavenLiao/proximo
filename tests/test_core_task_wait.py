@@ -130,20 +130,24 @@ def test_upid_node_reads_the_node_from_a_upid_and_nothing_else(upid, node):
 # --- the seam: a task-backed mutation ---------------------------------------------------------
 
 def test_a_task_backed_mutation_reports_finished_and_polls_the_node_the_upid_names(armed, monkeypatch):
+    # The UPID names a node the path does not (a cluster call's task runs where the vendor says):
+    # with both `pve1` this test could not tell the UPID's node from the path's (lens 3 F6).
+    upid = UPID.replace("UPID:pve1:", "UPID:pve2:")
     cfg, _, _ = armed
     _no_sleep(monkeypatch)
-    w = Sequence(polls=[{"status": "running"}, {"status": "running"}, {"status": "stopped", "exitstatus": "OK"}])
+    w = Sequence(answer=upid,
+                 polls=[{"status": "running"}, {"status": "running"}, {"status": "stopped", "exitstatus": "OK"}])
     monkeypatch.setattr(engine, "_client", lambda product, c=None: w)
     out = engine.execute(_start_row(monkeypatch), {}, cfg=cfg, path=CFG_PATH, wait=30)
-    assert out["data"] == UPID
-    assert out["task"] == {"upid": UPID, "finished": True, "succeeded": True, "status": "stopped",
+    assert out["data"] == upid
+    assert out["task"] == {"upid": upid, "finished": True, "succeeded": True, "status": "stopped",
                            "exitstatus": "OK", "timed_out": False, "polls": 3, "seconds": 4}
     gets = [p for m, p, _ in w.calls if m == "GET"]
-    assert gets == [f"/nodes/pve1/tasks/{UPID}/status"] * 3       # the node from the UPID, not the call
+    assert gets == [f"/nodes/pve2/tasks/{upid}/status"] * 3       # the node from the UPID, not the call
     rows = [r for r in _rows() if r["action"] in ("core.execute", "core.task")]
     assert [r["outcome"] for r in rows] == ["executing", "submitted", "finished"]
     task = rows[-1]
-    assert task["detail"]["upid"] == UPID and task["detail"]["polls"] == 3
+    assert task["detail"]["upid"] == upid and task["detail"]["polls"] == 3
     assert task["detail"]["intent"] == rows[0]["detail"]["intent"]   # the same intent closes it
 
 

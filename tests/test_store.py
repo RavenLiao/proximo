@@ -274,3 +274,20 @@ def test_a_symlink_planted_at_the_key_is_never_written_through(monkeypatch, cfg,
     out, _ = _read(monkeypatch, cfg, _guests(3))
     assert out["total"] == 3                     # the read is served; the convenience is skipped
     assert os.listdir(elsewhere) == []
+
+
+def test_a_kept_read_withholds_what_the_rows_own_line_drops(monkeypatch, cfg):
+    """Lens 3 F7 (mutant E7): `_keep` snapshots a list read for `since=`, withholding by the row's
+    rule; nothing pinned the rule, so a store keeping `keys` raw stayed green. The control first:
+    the record lands (a `_keep` that swallows everything would pass an absence check)."""
+    import gzip
+    import json
+    row = engine.resolve("pve", "GET", "/access/users")
+    assert "keys" in row.secret[0]
+    w = _Wire([{"userid": "root@pam", "keys": "a-second-factor-secret", "enable": True}])
+    monkeypatch.setattr(engine, "_client", lambda product, c=None: w)
+    engine.execute(row, {}, cfg=cfg, ledger_cfg=cfg, path="/access/users")
+    kept = [os.path.join(d, "latest.json.gz") for d, _, fs in os.walk(_store_dir(cfg)) if "latest.json.gz" in fs]
+    assert len(kept) == 1
+    with gzip.open(kept[0]) as f:
+        assert json.load(f)["rows"] == [{"userid": "root@pam", "enable": True}]

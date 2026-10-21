@@ -417,3 +417,20 @@ def test_the_mcp_call_door_serves_the_shell_lane_and_still_registers_six(box, mo
     out = door.read("pve", LOGS, {"unit": "ssh"}, cfg=box)
     assert out["untrusted"] is True and len(r.calls) == 2
     assert len(door.build_server()._tool_manager._tools) == 6
+
+
+# ---- lens 3 F5: the raw GET door dials HTTP; an authored ssh row is never its answer ----------------
+
+def test_the_raw_get_door_refuses_every_ssh_row_the_engine_serves():
+    """`apitree.find` asks the vendor's rows by default and both wires only for the engine. No
+    test pinned that: with the wire filter gone the three GET-shaped ssh rows (logs, probe, node
+    probe) answered the raw door, and 1,700 tests stayed green (lens 3 F5, mutant L6)."""
+    from proximo.core import apitree, rawdoor
+    ssh = [r for r in engine.table().values() if r.wire == "ssh"]
+    assert len(ssh) == 5 and sum(r.method == "GET" for r in ssh) == 3
+    for row in ssh:
+        concrete = row.path.replace("{node}", "pve1").replace("{vmid}", "101")
+        assert apitree.find(row.product, concrete, row.method) is None, row.address
+        assert apitree.find(row.product, concrete, row.method, wires=("http", "ssh")) == row.path, row.address
+        with pytest.raises(ProximoError, match="publishes no GET"):
+            rawdoor.validate(row.product, concrete)

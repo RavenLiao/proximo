@@ -122,6 +122,126 @@ def test_a_damaged_file_refuses_every_address(monkeypatch, how):
         _clear_data_caches()
 
 
+_EXEC = ("pve", "POST", "/nodes/{node}/lxc/{vmid}/exec")
+_START = ("pve", "POST", "/nodes/{node}/qemu/{vmid}/status/start")
+_GETCFG = ("pve", "GET", "/nodes/{node}/qemu/{vmid}/config")
+_PUTCFG = ("pve", "PUT", "/nodes/{node}/qemu/{vmid}/config")
+_CUR = "/nodes/{node}/qemu/{vmid}/status/current"
+_TASK = "/nodes/{node}/tasks/{upid}/status"
+_NET = {"snapshot": "POST /nodes/{node}/lxc/{vmid}/snapshot",
+        "rollback": "POST /nodes/{node}/lxc/{vmid}/snapshot/{snapname}/rollback"}
+_QNET = {"snapshot": "POST /nodes/{node}/qemu/{vmid}/snapshot",
+         "rollback": "POST /nodes/{node}/qemu/{vmid}/snapshot/{snapname}/rollback"}
+_BOOL = {"type": "boolean", "optional": True, "description": "snapshot first"}
+
+
+def _at(rows, key):
+    return next(r for r in rows if (r["product"], r["method"], r["path"]) == key)
+
+
+#: Lens 3 F8: every column named a row the file carried and the loader served it, on any row.
+#: One damage per rule the build keeps and the engine reads without a guard; each on a named row,
+#: and (lens 4 L4-2) one per CLAUSE of a rule, shaped so no sibling clause refuses it first.
+_COLUMN_DAMAGE = {
+    "lane on an ungated row": (_GETCFG, lambda r, rows: r.update(lane="agent")),
+    "twin on a read": (_GETCFG, lambda r, rows: r.update(twin=_GETCFG[2])),
+    "state on a read": (_GETCFG, lambda r, rows: r.update(state=_CUR)),
+    "expect on a read": (_GETCFG, lambda r, rows: r.update(expect={"status": "running"})),
+    "task status on a read": (_GETCFG, lambda r, rows: r.update(task_status=_TASK)),
+    "twin not the row's own path": (_PUTCFG, lambda r, rows: r.update(twin="/nodes/{node}/qemu")),
+    "state not the parent's current": (_START, lambda r, rows: r.update(state=_GETCFG[2])),
+    "state beside a served twin": (_PUTCFG, lambda r, rows: r.update(state=_CUR)),
+    "expect without a state": (_PUTCFG, lambda r, rows: r.update(expect={"status": "running"})),
+    "expect not a status": (_START, lambda r, rows: r.update(expect={"stopped": "yes"})),
+    "a mutation with no task status": (_START, lambda r, rows: r.update(task_status=None)),  # it would not poll
+    "task status not a task read": (_START, lambda r, rows: r.update(task_status="/nodes/{node}/qemu")),
+    "net on an http row": (_START, lambda r, rows: r.update(net=_NET)),
+    "net on another container's path": (_EXEC, lambda r, rows: r.update(net={
+        "snapshot": "POST /nodes/{node}/qemu/{vmid}/snapshot",
+        "rollback": "POST /nodes/{node}/qemu/{vmid}/snapshot/{snapname}/rollback"})),
+    "net rollback a delete": (_EXEC, lambda r, rows: r.update(
+        net={**_NET, "rollback": "DELETE /nodes/{node}/lxc/{vmid}"})),
+    "net snapshot naming its own snapname": (_EXEC, lambda r, rows: r.update(
+        net={**_NET, "snapshot": _NET["rollback"]})),
+    # lens 4 L4-2: the clause alone, with every sibling clause satisfied
+    "state on the current read itself": (("pve", "GET", _CUR), lambda r, rows: r.update(state=_CUR)),
+    "state beside a served twin at the parent's current": (_START, lambda r, rows: (
+        rows.append({**_at(rows, _GETCFG), "path": _START[2]}), r.update(twin=_START[2]))),
+    "net on an http row with the snapshot param": (_PUTCFG, lambda r, rows: (
+        r["params"].update(snapshot=_BOOL), r.update(net=_QNET))),
+    "net beside a snapshot param that is not a boolean": (_EXEC, lambda r, rows: r["params"].update(
+        snapshot={**_BOOL, "type": "string"})),
+    "net rollback naming no snapshot": (_EXEC, lambda r, rows: r.update(
+        net={**_NET, "rollback": "POST /nodes/{node}/lxc/{vmid}/status/stop"})),
+}
+
+
+@pytest.mark.parametrize("how", list(_COLUMN_DAMAGE))
+def test_a_column_the_build_would_not_write_refuses_every_address(monkeypatch, how):
+    from conftest import _clear_data_caches
+
+    doc = _shipped()
+    key, damage = _COLUMN_DAMAGE[how]
+    damage(_at(doc["rows"], key), doc["rows"])
+    _serve(monkeypatch, doc)
+    try:
+        with pytest.raises(ProximoError, match="proximo.json.gz"):
+            engine.resolve("pve", "GET", "/version")
+    finally:
+        monkeypatch.undo()
+        _clear_data_caches()
+
+
+#: Lens 4 L4-3: the named-row check's own cases. Each column keeps the shape the build writes
+#: (the state IS the parent's /current, the twin IS the row's own path, the task IS a task read,
+#: the net IS a snapshot on its own container) and names a row the file no longer carries, so
+#: only the lookup can refuse it: a KeyError at plan or execute time is not a refusal.
+_DROPPED = {
+    "the state's current": ("pve", "GET", _CUR),
+    "the twin's read": _GETCFG,
+    "the task's status": ("pve", "GET", _TASK),
+    "the net's snapshot": ("pve", "POST", _NET["snapshot"].partition(" ")[2]),
+}
+
+
+@pytest.mark.parametrize("which", list(_DROPPED))
+def test_a_column_naming_a_row_the_file_dropped_refuses_every_address(monkeypatch, which):
+    from conftest import _clear_data_caches
+
+    doc = _shipped()
+    doc["rows"].remove(_at(doc["rows"], _DROPPED[which]))
+    _serve(monkeypatch, doc)
+    try:
+        with pytest.raises(ProximoError, match="which the file does not carry"):
+            engine.resolve("pve", "GET", "/version")
+    finally:
+        monkeypatch.undo()
+        _clear_data_caches()
+
+
+def test_an_authored_row_never_answers_before_the_vendors_whatever_the_files_order(monkeypatch):
+    """Lens 3 F8: `resolve` walked the file's order, so a forged file with the ssh exec row ahead of
+    an overlapping vendor wildcard answered the ssh row. The vendor's rows are asked first by wire."""
+    from conftest import _clear_data_caches
+
+    engine.resolve("pve", "POST", "/nodes/n/lxc/101/exec")      # prime every cache: the clear must matter
+    doc = _shipped()
+    rows = doc["rows"]
+    exec_row = rows.pop(next(i for i, r in enumerate(rows) if (r["product"], r["method"], r["path"]) == _EXEC))
+    start = next(r for r in rows if (r["product"], r["method"], r["path"]) == _START)
+    vendor = {**start, "path": "/nodes/{node}/lxc/{vmid}/{what}", "state": None, "expect": None,
+              "params": {k: {"type": "string", "optional": False, "description": k} for k in ("node", "vmid", "what")}}
+    rows.insert(0, exec_row)
+    rows.append(vendor)
+    _serve(monkeypatch, doc)
+    try:
+        row = engine.resolve("pve", "POST", "/nodes/n/lxc/101/exec")
+        assert (row.wire, row.path) == ("http", "/nodes/{node}/lxc/{vmid}/{what}")
+    finally:
+        monkeypatch.undo()
+        _clear_data_caches()
+
+
 def test_the_battery_and_the_vocabulary_keep_their_authored_order():
     """The build serialises with sorted keys; the two sections are lists so the record's own order
     (status, storage, tasks ... not alphabetical) is what DIAGNOSE runs and contract 1 samples."""
@@ -289,9 +409,53 @@ def test_the_secret_column_is_the_own_line_merged_with_the_read_twins():
     merged = 0
     for (p, m, path), r in t.items():
         own, twin = reads.get(f"{p}:{m} {path}"), reads.get(f"{p}:GET {path}") if m != "GET" else None
-        assert r["secret"] == bj.merged_secret(own, twin), (p, m, path)
+        # the oracle is spelled HERE, not `bj.merged_secret` on both sides (lens 3 F7: circular)
+        if own is None or twin is None:
+            want = own if twin is None else twin
+        else:
+            want = {"drop": sorted({*own["drop"], *twin["drop"]}),
+                    "userinfo": sorted({*own["userinfo"], *twin["userinfo"]}),
+                    "rows": sorted({*own["rows"], *twin["rows"]}),
+                    "text": own["text"] or twin["text"], "bearer": own["bearer"]}
+        assert r["secret"] == want, (p, m, path)
         merged += own is None and twin is not None
     assert merged == 88 and len(reads) == 90          # 97 lines: 90 read rules, 7 arg-only
+
+
+def test_merged_secret_unions_every_set_ors_the_text_and_takes_the_bearer_from_the_own_line():
+    """Lens 3 F7: no shipped row has both lines with different sets, so the merge's branches were
+    data-equivalent and untested (mutants B5-B8 survived). Planted lines, every field different."""
+    own = {"drop": ["a"], "userinfo": ["u1"], "rows": ["r1"], "text": False, "bearer": None}
+    twin = {"drop": ["b"], "userinfo": ["u2"], "rows": ["r2"], "text": True, "bearer": "the twin's bearer"}
+    assert bj.merged_secret(own, twin) == {"drop": ["a", "b"], "userinfo": ["u1", "u2"], "rows": ["r1", "r2"],
+                                          "text": True, "bearer": None}
+    assert bj.merged_secret({**own, "bearer": "own"}, {**twin, "text": False})["bearer"] == "own"
+    assert bj.merged_secret({**own, "bearer": "own"}, {**twin, "text": False})["text"] is False
+    assert bj.merged_secret(None, twin) == twin and bj.merged_secret(own, None) == own
+    assert bj.merged_secret(None, None) is None
+
+
+def _row(product, method, path, **kw):
+    return {"product": product, "method": method, "path": path, "access": "read" if method == "GET" else "mutate",
+            "excluded": False, "gate": None, **kw}
+
+
+def test_reads_of_reads_through_current_only_when_it_is_served_and_no_twin_is():
+    """Lens 3 F7: a gated `/current` still read (mutant B2) and a served twin beside a read
+    `/current` (B11) were data-equivalent on the shipped file; planted rows make each branch count."""
+    def index(*rows):
+        return {(r["product"], r["method"], r["path"]): r for r in rows}
+    start, cur = _row("pve", "POST", "/x/{id}/status/start"), _row("pve", "GET", "/x/{id}/status/current")
+    assert bj.reads_of(start, index(start, cur)) == {"twin": None, "state": "/x/{id}/status/current",
+                                                     "expect": {"status": "running"}}
+    assert bj.reads_of(start, index(start, {**cur, "gate": "held"}))["state"] is None            # B2
+    assert bj.reads_of(start, index(start, {**cur, "excluded": True}))["state"] is None
+    same = _row("pve", "GET", "/x/{id}/status/start")
+    assert bj.reads_of(start, index(start, cur, same)) == {"twin": "/x/{id}/status/start", "state": None,
+                                                           "expect": None}                       # B11
+    assert bj.reads_of(start, index(start, cur, {**same, "excluded": True}))["state"] == "/x/{id}/status/current"
+    assert bj.reads_of(_row("pve", "POST", "/x/{id}/status/reboot"), index(cur))["expect"] is None
+    assert bj.reads_of(cur, index(cur)) == {"twin": None, "state": None, "expect": None}
 
 
 def test_an_authored_name_or_key_never_renames_a_subject_or_a_probe(records):

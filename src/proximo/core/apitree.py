@@ -80,12 +80,16 @@ def published() -> dict[str, Any]:
     # A column that names another row names one the file carries: a twin, a state, a task-status
     # address or a net pointing at nothing would be a KeyError at plan or execute time, not a
     # refusal, and the engine reads them without a lookup guard by design (the build proved them).
+    index = {(r["product"], r["method"], r["path"]): r for r in rows}
     for r in rows:
         named = [(r["product"], "GET", a) for a in (r["twin"], r["state"], r["task_status"]) if a]
         named += [(r["product"], a.partition(" ")[0], a.partition(" ")[2]) for a in (r["net"] or {}).values()]
-        if missing := [n for n in named if n not in seen]:
+        if missing := [n for n in named if n not in index]:
             raise ProximoError(f"proximo.json.gz row {r['method']} {r['path']} on {r['product']} names "
                                f"{' '.join(missing[0][1:]).strip() or 'nothing'}, which the file does not carry; "
+                               "every address is refused")
+        if wrong := _wrong_column(r, index):
+            raise ProximoError(f"proximo.json.gz row {r['method']} {r['path']} on {r['product']} {wrong}; "
                                "every address is refused")
     # The judgements the file exists to carry. A file with none of them is the shape the engine
     # governs and would serve every credential and read every guest-written answer as clean; the
@@ -97,6 +101,34 @@ def published() -> dict[str, Any]:
         if not any(r[column] for r in rows):
             raise ProximoError(f"proximo.json.gz {what}; every address is refused")
     return doc
+
+
+def _wrong_column(r: dict[str, Any], index: dict[tuple[str, str, str], dict[str, Any]]) -> str | None:
+    """The first column that names a row the file carries but is not what the build writes
+    (lens 3 F8: the loader held the addresses and nothing else, so a lane on an ungated row, a
+    read with a twin, a state beside a served twin, a mutation with no task to poll or a net on
+    another container were served). The engine reads each column without a guard by design;
+    the rule it relies on is checked here, once, in the build's own words."""
+    mutate, parent = r["access"] == "mutate", r["path"].rpartition("/")[0]
+    twin, state, expect, task, net = r["twin"], r["state"], r["expect"], r["task_status"], r["net"]
+    snap = r["params"].get("snapshot") or {}
+    rules = (
+        (r["lane"] is not None and not r["gate"], "carries a lane with no gate to open"),
+        (not mutate and any(c is not None for c in (twin, state, expect, task)), "is a read with a read of its own"),
+        (twin is not None and twin != r["path"], "names a twin that is not its own path"),
+        (state is not None and (state != parent + "/current"
+                                or (twin is not None and not index[(r["product"], "GET", twin)]["excluded"])),
+         "reads a state that is not the parent's /current beside no served twin"),
+        (expect is not None and (state is None or set(expect) != {"status"}), "expects a status with no state to read"),
+        ((task is None) != (not mutate or r["excluded"])
+         or (task is not None and not task.endswith("/tasks/{upid}/status")),
+         "submits a task the file does not say where to poll"),
+        (net is not None and (r["wire"] != "ssh" or snap.get("type") != "boolean"
+                              or any(not a.startswith(f"POST {parent}/") for a in net.values())
+                              or "{snapname}" in net["snapshot"] or "{snapname}" not in net["rollback"]),
+         "carries a net that is not a snapshot and its rollback on its own container"),
+    )
+    return next((words for wrong, words in rules if wrong), None)
 
 
 PRODUCTS = ("pve", "pbs", "pmg", "pdm")
@@ -157,9 +189,12 @@ def raw_tree(product: str) -> tuple[tuple[str, str], ...]:
 
 @cache
 def _rows(product: str) -> tuple[tuple[str, str, str], ...]:
-    """Every row's `(path, method, wire)` on `product` in the file's order: the vendor's first,
-    the authored ssh rows after, so a match asks the vendor before an authored row can answer."""
-    return tuple((r["path"], r["method"], r["wire"]) for r in published()["rows"] if r["product"] == product)
+    """Every row's `(path, method, wire)` on `product`: the vendor's first, the authored ssh rows
+    after, so a match asks the vendor before an authored row can answer. By WIRE, not by the
+    file's order: the build writes the ssh rows last, and a forged file that did not was answered
+    by the ssh row first (lens 3 F8)."""
+    rows = [(r["path"], r["method"], r["wire"]) for r in published()["rows"] if r["product"] == product]
+    return tuple(sorted(rows, key=lambda t: t[2] != "http"))
 
 
 @cache

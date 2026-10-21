@@ -125,6 +125,20 @@ def test_a_power_action_reads_status_current_and_branches(armed_plane, monkeypat
     assert out["change"] == ({"status": {"from": status, "to": expected}} if expected else {"action": action})
 
 
+@pytest.mark.parametrize("path", ["/nodes/pve1/qemu/101/status/start/", "/nodes/pv%65%31/qemu/101/status/start"])
+def test_the_state_read_is_the_template_bound_not_the_callers_spelling_cut_at_the_last_slash(
+        armed_plane, monkeypatch, path):
+    """Lens 4 L4-1: a mutant that derived the read from the caller's path (`rpartition("/")` plus
+    `/current`) survived the suite; on a trailing slash it reads `.../start/current`, on an encoded
+    node it reads the encoded spelling. The read is the row's `state` template filled from the
+    bound path, so both spellings read the one sibling the file names."""
+    w = Twin({"status": "stopped"})
+    monkeypatch.setattr(engine, "_client", lambda product, c=None: w)
+    row = _tiered("pve", "POST", "/nodes/{node}/qemu/{vmid}/status/start")
+    engine.plan(row, {}, path, cfg=armed_plane)
+    assert w.calls == [("GET", "/nodes/pve1/qemu/101/status/current", {})]
+
+
 def test_an_lxc_action_binds_its_own_path(armed_plane, monkeypatch):
     w = Twin({"status": "running"})
     monkeypatch.setattr(engine, "_client", lambda product, c=None: w)

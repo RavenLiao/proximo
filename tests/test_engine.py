@@ -846,3 +846,12 @@ def test_the_family_line_does_not_stamp_the_opt_in_gated_agent_subtree():
     agent mutation carries exactly its authored tier, not whatever the family would stamp."""
     assert engine.table()[("pve", "GET", "/nodes/{node}/qemu/{vmid}/agent/get-users")].tier is None
     assert engine.table()[("pve", "POST", "/nodes/{node}/qemu/{vmid}/agent/exec")].tier == "destructive"
+
+
+def test_the_argument_rule_never_carries_the_answers_bearer():
+    """Lens 3 F7 (mutant E5): a token mint's line labels its ANSWER the credential; its arguments
+    are receipted by name like any other. No test held the argument rule's bearer slot to None."""
+    row = engine.table()[("pbs", "POST", "/access/users/{userid}/token/{token-name}")]
+    assert isinstance(row.secret[4], str)
+    assert engine.arg_rule(row)[4] is None
+    assert engine.arg_rule(row)[0] >= row.secret[0]
