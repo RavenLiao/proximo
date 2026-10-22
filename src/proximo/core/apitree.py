@@ -38,7 +38,8 @@ LANES = (None, "agent", "shell", "node", "download")
 
 @cache
 def published() -> dict[str, Any]:
-    """The one JSON, checked: schema, every row's columns and their types, no address twice."""
+    """The one JSON, checked: schema, every row's columns and their types, no address twice, every
+    named row carried, and every computed column what the build writes from the file's own rows."""
     try:
         doc = json.loads(gzip.decompress(resources.files("proximo.core").joinpath("proximo.json.gz").read_bytes()))
     except (OSError, EOFError, ValueError, zlib.error) as exc:  # zlib.error: bytes flipped inside the stream
@@ -103,33 +104,77 @@ def published() -> dict[str, Any]:
     return doc
 
 
-def _wrong_column(r: dict[str, Any], index: dict[tuple[str, str, str], dict[str, Any]]) -> str | None:
-    """The first column that names a row the file carries but is not what the build writes
-    (lens 3 F8: the loader held the addresses and nothing else, so a lane on an ungated row, a
-    read with a twin, a state beside a served twin, a mutation with no task to poll or a net on
-    another container were served). The engine reads each column without a guard by design;
-    the rule it relies on is checked here, once, in the build's own words."""
-    mutate, parent = r["access"] == "mutate", r["path"].rpartition("/")[0]
-    twin, state, expect, task, net = r["twin"], r["state"], r["expect"], r["task_status"], r["net"]
-    snap = r["params"].get("snapshot") or {}
-    rules = (
-        (r["lane"] is not None and not r["gate"], "carries a lane with no gate to open"),
-        (not mutate and any(c is not None for c in (twin, state, expect, task)), "is a read with a read of its own"),
-        (twin is not None and twin != r["path"], "names a twin that is not its own path"),
-        (state is not None and (state != parent + "/current"
-                                or (twin is not None and not index[(r["product"], "GET", twin)]["excluded"])),
-         "reads a state that is not the parent's /current beside no served twin"),
-        (expect is not None and (state is None or set(expect) != {"status"}), "expects a status with no state to read"),
-        ((task is None) != (not mutate or r["excluded"])
-         or (task is not None and not task.endswith("/tasks/{upid}/status")),
-         "submits a task the file does not say where to poll"),
-        (net is not None and (r["wire"] != "ssh" or snap.get("type") != "boolean"
-                              or any(not a.startswith(f"POST {parent}/") for a in net.values())
-                              or "{snapname}" in net["snapshot"] or "{snapname}" not in net["rollback"]),
-         "carries a net that is not a snapshot and its rollback on its own container"),
-    )
-    return next((words for wrong, words in rules if wrong), None)
+#: What a power action aims at (the build's table): the status PLAN's `noop` and `change` read against.
+_EXPECTED = {"start": "running", "stop": "stopped", "shutdown": "stopped", "resume": "running"}
 
+
+def _wrong_column(r: dict[str, Any], index: dict[tuple[str, str, str], dict[str, Any]]) -> str | None:
+    """The first computed column that is not what the build writes from the file's own rows (lens 3
+    F8 and lens 4 L4-4: the loader held the addresses, then seven rules, and a dozen shapes the
+    build never writes were still served). The engine reads each column without a guard by
+    design; what it relies on is derived here exactly as the build derives it, and compared."""
+    from proximo.core import rawdoor, shell  # rawdoor imports this module; bound at call time, not import time
+
+    product, path, mutate = r["product"], r["path"], r["access"] == "mutate"
+    parent, _, action = path.rpartition("/")
+    same, cur = index.get((product, "GET", path)), index.get((product, "GET", parent + "/current"))
+    state = (parent + "/current" if mutate and (same is None or same["excluded"])
+             and cur is not None and not cur["excluded"] and not cur["gate"] else None)
+    remote = re.match(r"^/(pve|pbs)/remotes/\{remote\}/", path)
+    want = {
+        "access": "read" if r["method"] == "GET" else "mutate",   # the method's: a POST read as a read skips every gate
+        "twin": path if mutate and same is not None else None,
+        "state": state,
+        "expect": {"status": _EXPECTED[action]} if state and action in _EXPECTED else None,
+        "task_status": (None if not mutate or r["excluded"]
+                        else f"/{remote.group(1)}/remotes/{{remote}}/tasks/{{upid}}/status" if remote
+                        else "/nodes/{node}/tasks/{upid}/status"),
+        "lane": (None if not r["gate"] else shell.lane_of(path) if r["wire"] == "ssh"
+                 else "download" if rawdoor.is_stream(product, path)
+                 else "agent" if product == "pve" and path.startswith(rawdoor.AGENT_PREFIX) else None),
+    }
+    for column, value in want.items():
+        if r[column] != value:
+            return f"carries {column} {r[column]!r} where the file's own rows give {value!r}"
+    if r["creates"] is not None and not _is_create(r, index):
+        return "carries a create that is not an ungated POST with ungated GET and DELETE twins at its path"
+    return _wrong_net(r, index)
+
+
+def _is_create(r: dict[str, Any], index: dict[tuple[str, str, str], dict[str, Any]]) -> bool:
+    """The build's `creates`: a judged create is a published, ungated, unexcluded POST whose GET
+    (to read the record back) and DELETE (to put absence back) twins at the same path are served
+    and callable with the path alone; UNDO sends them no arguments."""
+    if r["method"] != "POST" or r["gate"] or r["excluded"]:      # access is the method's (checked first)
+        return False
+    for twin in ("GET", "DELETE"):
+        t = index.get((r["product"], twin, r["path"]))
+        if (t is None or t["excluded"] or t["gate"]
+                or any(not v.get("optional") and f"{{{k}}}" not in t["path"] for k, v in t["params"].items())):
+            return False
+    return True
+
+
+def _wrong_net(r: dict[str, Any], index: dict[tuple[str, str, str], dict[str, Any]]) -> str | None:
+    """A net (the build's `refuse_bad_net`): on the ssh wire a boolean `snapshot` parameter and a
+    net come together; both addresses are ungated, unexcluded POSTs on the command's own container;
+    the snapshot publishes `snapname` without naming one; the rollback names it."""
+    net, snap = r["net"], r["params"].get("snapshot")
+    if r["wire"] == "ssh" and (net is None) != (snap is None):
+        return "carries a snapshot parameter without a net, or a net without the parameter"
+    if net is None:
+        return None
+    if r["wire"] != "ssh" or not isinstance(snap, dict) or snap.get("type") != "boolean":
+        return "carries a net beside no boolean snapshot parameter on the ssh wire"
+    own = r["path"].rpartition("/")[0] + "/"
+    for what, address in net.items():
+        method, _, path = address.partition(" ")
+        t = index[(r["product"], method, path)]        # present: the named-row check ran first
+        if (t["excluded"] or t["gate"] or method != "POST" or not path.startswith(own)
+                or (what == "snapshot" and ("snapname" not in t["params"] or "{snapname}" in path))
+                or (what == "rollback" and "{snapname}" not in path)):
+            return f"carries a net {what} that is not a mutation the door serves on its own container"
+    return None
 
 PRODUCTS = ("pve", "pbs", "pmg", "pdm")
 SOURCES = {

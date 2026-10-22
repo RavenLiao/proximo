@@ -2,6 +2,16 @@
 
 All notable changes to Proximo. Format loosely follows Keep a Changelog; versions are SemVer.
 
+## [0.46.2] — 2026-10-22
+
+**Six columns derived; two dead example keys removed.** A patch: a stricter loader, a corrected example file, and tests. No new capability; door contract 1 is unchanged and `proximo.json.gz` is byte-for-byte 0.46.0's.
+
+**The loader derives six columns from the data file's own rows.** 0.46.1 read `access` as written and checked that the columns twin, state, expect, task status, lane and creates named rows that existed. A forged `proximo.json.gz` with a POST marked `read` was served as a read, past the arm, tier and consent gates; a lane on an ungated row, a state beside a served twin, a create on a read, and the other shapes the build never writes were served too. The loader now computes `access`, twin, state, expect, task status and lane from the file's rows the way the build does (`access` from the method, the rest from the file's own reads and twins) and refuses the file whole on the first column that differs, naming the column and both values; a `creates` is held to the build's eligibility rule (an ungated POST with served GET and DELETE twins at its path), since the build takes which rows create from an authored record. A `snapshot` parameter that is not a table is refused with a sentence instead of a traceback. The loader is no stricter than the build: every shape the build writes loads.
+
+**The example registry teaches only the keys the core reads (#98).** `packaging/targets.example.toml` showed `ssh_target` on one target and `node` on three. The loader the 0.45.0 cut removed read them; the core never has, and the registry ignores a key it does not know, so an operator who set them got nothing. 0.45.0 through 0.46.1 shipped the example that way. The four lines are gone, the header says the ssh lanes dial only the env's `PROXIMO_SSH_TARGET` and that the node a call means is in its path, and a test drives the real loader over the shipped example and fails on any key whose value can change without the loader noticing.
+
+**1,780 tests** on Python 3.12 and 3.13; the mcp 1.x leg runs 1,778 and skips the two 2.x-only seams.
+
 ## [0.46.1] — 2026-10-21
 
 **Every column, every rollback target, held to its rule.** The one data file carries seven cross-column rules the build keeps and the engine reads without a guard (which opt-in lane a gated row is served on, the read that shows a mutation's target, where the plane reports its task, a container command's snapshot net and its rollback), and the loader checked that the addresses they named existed and nothing else: a forged `proximo.json.gz` with a lane on an ungated row, a read with a read of its own, a state beside a served twin, a mutation with no task to poll or a net on another container's path was served. `apitree.published()` now holds every column to the build's rule, in the build's own words, and refuses the file whole on the first row that breaks one. The vendor's rows are asked before the shell lane's authored rows whatever the file's order (a forged file with the ssh exec row ahead of an overlapping vendor wildcard answered the ssh row). The shipped file is unchanged and loads; every one of the 1,804 rows resolves, plans and executes identically to 0.46.0 through a fake wire.

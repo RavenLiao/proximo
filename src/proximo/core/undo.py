@@ -211,10 +211,10 @@ def _rollback(ref: str, entry: dict, detail: dict, lines: list[str], lcfg: Any, 
     # an encoded node in a capture is refused, as the consent exemption refuses them.
     try:
         cmd = engine.resolve("pve", "POST", target) if target else None
-        bound = engine.coerce_args(cmd, engine.bind(cmd, target)) if cmd is not None else None
+        bound = engine.coerce_args(cmd, engine.bind(cmd, target)) if cmd is not None else {}
     except ProximoError:
-        cmd = bound = None
-    if (cmd is None or bound is None or engine.fill(cmd.path, bound) != target or not cmd.net
+        cmd, bound = None, {}
+    if (cmd is None or engine.fill(cmd.path, bound) != target or not cmd.net
             or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,39}", name)):
         raise ProximoError(f"capture {ref} names no container snapshot this door can roll back")
     method, _, template = cmd.net["rollback"].partition(" ")   # the command's own net, never a literal

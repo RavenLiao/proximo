@@ -432,5 +432,6 @@ def test_the_raw_get_door_refuses_every_ssh_row_the_engine_serves():
         concrete = row.path.replace("{node}", "pve1").replace("{vmid}", "101")
         assert apitree.find(row.product, concrete, row.method) is None, row.address
         assert apitree.find(row.product, concrete, row.method, wires=("http", "ssh")) == row.path, row.address
-        with pytest.raises(ProximoError, match="publishes no GET"):
-            rawdoor.validate(row.product, concrete)
+        if row.method == "GET":       # a POST row's path has no GET anyway; only here does the refusal say something
+            with pytest.raises(ProximoError, match="publishes no GET"):
+                rawdoor.validate(row.product, concrete)

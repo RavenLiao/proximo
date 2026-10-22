@@ -6,6 +6,7 @@ exactly the shape the engine governs refuses the load whole, never read with a d
 """
 import gzip
 import json
+import re
 import tomllib
 
 import pytest
@@ -130,6 +131,12 @@ _CUR = "/nodes/{node}/qemu/{vmid}/status/current"
 _TASK = "/nodes/{node}/tasks/{upid}/status"
 _NET = {"snapshot": "POST /nodes/{node}/lxc/{vmid}/snapshot",
         "rollback": "POST /nodes/{node}/lxc/{vmid}/snapshot/{snapname}/rollback"}
+_REBOOT = ("pve", "POST", "/nodes/{node}/qemu/{vmid}/status/reboot")
+_PDM_REMOTE = ("pdm", "PUT", "/pve/remotes/{remote}/firewall/options")
+_PDM_NODE = ("pdm", "PUT", "/access/acl")
+_LXCSNAP = ("pve", "POST", "/nodes/{node}/lxc/{vmid}/snapshot")
+_TOKEN = "/access/users/{userid}/token/{tokenid}"          # the one pve create: POST with GET + DELETE twins
+_MADE = "a record this would make, judged"
 _QNET = {"snapshot": "POST /nodes/{node}/qemu/{vmid}/snapshot",
          "rollback": "POST /nodes/{node}/qemu/{vmid}/snapshot/{snapname}/rollback"}
 _BOOL = {"type": "boolean", "optional": True, "description": "snapshot first"}
@@ -173,6 +180,107 @@ _COLUMN_DAMAGE = {
         snapshot={**_BOOL, "type": "string"})),
     "net rollback naming no snapshot": (_EXEC, lambda r, rows: r.update(
         net={**_NET, "rollback": "POST /nodes/{node}/lxc/{vmid}/status/stop"})),
+    # lens 4 L4-4 / L4-5: the shapes the build never writes that the loader served; the loader now
+    # computes what the build would write from the file's own rows and refuses any column that differs
+    "twin missing where the file serves a GET at the path": (_PUTCFG, lambda r, rows: r.update(twin=None)),
+    "state naming a gated current": (_START, lambda r, rows: _at(rows, ("pve", "GET", _CUR)).update(gate="x")),
+    "state naming an excluded current": (_START, lambda r, rows: _at(rows, ("pve", "GET", _CUR)).update(excluded=True)),
+    "state missing where the file gives one": (_START, lambda r, rows: r.update(state=None, expect=None)),
+    "expect missing where the state gives one": (_START, lambda r, rows: r.update(expect=None)),
+    "expect flipped": (_START, lambda r, rows: r.update(expect={"status": "stopped"})),
+    "expect on an action that aims at nothing": (_REBOOT, lambda r, rows: r.update(expect={"status": "running"})),
+    "task status in the node form on a remote's row": (_PDM_REMOTE, lambda r, rows: r.update(task_status=_TASK)),
+    "task status in the remote form on a node row": (_PDM_NODE, lambda r, rows: r.update(
+        task_status="/pve/remotes/{remote}/tasks/{upid}/status")),
+    "lane swapped between valid values": (_EXEC, lambda r, rows: r.update(lane="agent")),
+    "lane missing on a gated row": (_EXEC, lambda r, rows: r.update(lane=None)),
+    "creates on a read": (_GETCFG, lambda r, rows: r.update(creates="a record the read would make")),
+    "net snapshot target gated": (_EXEC, lambda r, rows: _at(rows, _LXCSNAP).update(gate="x")),
+    "net snapshot target excluded": (_EXEC, lambda r, rows: _at(rows, _LXCSNAP).update(
+        excluded=True, task_status=None)),      # task None too: an excluded row's own shape, so only the net refuses
+    "net snapshot target without a snapname parameter": (_EXEC, lambda r, rows: _at(rows, _LXCSNAP)["params"].pop(
+        "snapname")),
+    "ssh row with the snapshot parameter and no net": (_EXEC, lambda r, rows: r.update(net=None)),
+    "snapshot parameter that is not a table": (_EXEC, lambda r, rows: r["params"].update(snapshot="boolean")),
+    # lens 6 L6-2: a rollback that DELETES the snapshot carries {snapname}, so only the POST clause refuses it
+    "net rollback a delete of the snapshot": (_EXEC, lambda r, rows: r.update(
+        net={**_NET, "rollback": "DELETE /nodes/{node}/lxc/{vmid}/snapshot/{snapname}"})),
+    # lens 6 L6-1: a create is an ungated, unexcluded POST with ungated, unexcluded GET and DELETE twins
+    # at the same path, each callable with the path alone (the build's `creates`)
+    "creates on a delete": (("pve", "DELETE", _TOKEN), lambda r, rows: r.update(creates=_MADE)),
+    "creates on a gated post": (("pve", "POST", "/nodes/{node}/qemu/{vmid}/agent/exec"), lambda r, rows: r.update(
+        creates=_MADE)),
+    "creates on an excluded post": (("pve", "POST", "/nodes/{node}/qemu/{vmid}/vncproxy"), lambda r, rows: r.update(
+        creates=_MADE)),
+    "creates on a post with no delete twin": (_START, lambda r, rows: r.update(creates=_MADE)),
+    "creates on a post whose get twin is gated": (("pve", "POST", _TOKEN), lambda r, rows: _at(
+        rows, ("pve", "GET", _TOKEN)).update(gate="x")),
+    "creates on a post whose delete twin is excluded": (("pve", "POST", _TOKEN), lambda r, rows: _at(
+        rows, ("pve", "DELETE", _TOKEN)).update(excluded=True, task_status=None)),
+    "creates on a post whose get twin needs an argument": (("pve", "POST", _TOKEN), lambda r, rows: _at(
+        rows, ("pve", "GET", _TOKEN))["params"].update(fmt={"type": "string", "optional": False, "description": "x"})),
+    # the create row's own gate and exclusion, with both twins served (the twin clause must not mask them)
+    "creates on a gated post with both twins": (("pve", "POST", _TOKEN), lambda r, rows: r.update(gate="x")),
+    "creates on an excluded post with both twins": (("pve", "POST", _TOKEN), lambda r, rows: r.update(
+        excluded=True, task_status=None)),
+    # access is the method's (the build: READ iff GET); a POST served as a read would pass every gate
+    "access read on a post": (_START, lambda r, rows: r.update(access="read")),
+    "access mutate on a get": (_GETCFG, lambda r, rows: r.update(access="mutate")),
+}
+
+
+#: The words each case must die on: a case refused by a sibling rule tests nothing about its own (lens 4 L4-2).
+_WORDS = {
+    'lane on an ungated row': 'carries lane',
+    'twin on a read': 'carries twin',
+    'state on a read': 'carries state',
+    'expect on a read': 'carries expect',
+    'task status on a read': 'carries task_status',
+    "twin not the row's own path": 'carries twin',
+    "state not the parent's current": 'carries state',
+    'state beside a served twin': 'carries state',
+    'expect without a state': 'carries expect',
+    'expect not a status': 'carries expect',
+    'a mutation with no task status': 'carries task_status',
+    'task status not a task read': 'carries task_status',
+    'net on an http row': 'no boolean snapshot parameter on the ssh wire',
+    "net on another container's path": 'net snapshot that is not a mutation the door serves',
+    'net rollback a delete': 'net rollback that is not a mutation the door serves',
+    'net snapshot naming its own snapname': 'net snapshot that is not a mutation the door serves',
+    'state on the current read itself': 'carries state',
+    "state beside a served twin at the parent's current": 'carries state',
+    'net on an http row with the snapshot param': 'no boolean snapshot parameter on the ssh wire',
+    'net beside a snapshot param that is not a boolean': 'no boolean snapshot parameter on the ssh wire',
+    'net rollback naming no snapshot': 'net rollback that is not a mutation the door serves',
+    'twin missing where the file serves a GET at the path': 'carries twin',
+    'state naming a gated current': 'carries state',
+    'state naming an excluded current': 'carries state',
+    'state missing where the file gives one': 'carries state',
+    'expect missing where the state gives one': 'carries expect',
+    'expect flipped': 'carries expect',
+    'expect on an action that aims at nothing': 'carries expect',
+    "task status in the node form on a remote's row": 'carries task_status',
+    'task status in the remote form on a node row': 'carries task_status',
+    'lane swapped between valid values': 'carries lane',
+    'lane missing on a gated row': 'carries lane',
+    'creates on a read': 'carries a create',
+    'net snapshot target gated': 'net snapshot that is not a mutation the door serves',
+    'net snapshot target excluded': 'net snapshot that is not a mutation the door serves',
+    'net snapshot target without a snapname parameter': 'net snapshot that is not a mutation the door serves',
+    'ssh row with the snapshot parameter and no net': 'snapshot parameter without a net',
+    'snapshot parameter that is not a table': 'no boolean snapshot parameter on the ssh wire',
+    'net rollback a delete of the snapshot': 'net rollback that is not a mutation the door serves',
+    'creates on a delete': 'carries a create',
+    'creates on a gated post': 'carries a create',
+    'creates on an excluded post': 'carries a create',
+    'creates on a post with no delete twin': 'carries a create',
+    'creates on a post whose get twin is gated': 'carries a create',
+    'creates on a post whose delete twin is excluded': 'carries a create',
+    'creates on a post whose get twin needs an argument': 'carries a create',
+    'creates on a gated post with both twins': 'carries a create',
+    'creates on an excluded post with both twins': 'carries a create',
+    'access read on a post': 'carries access',
+    'access mutate on a get': 'carries access',
 }
 
 
@@ -185,11 +293,52 @@ def test_a_column_the_build_would_not_write_refuses_every_address(monkeypatch, h
     damage(_at(doc["rows"], key), doc["rows"])
     _serve(monkeypatch, doc)
     try:
-        with pytest.raises(ProximoError, match="proximo.json.gz"):
+        with pytest.raises(ProximoError, match=f"proximo.json.gz.*{re.escape(_WORDS[how])}"):
             engine.resolve("pve", "GET", "/version")
     finally:
         monkeypatch.undo()
         _clear_data_caches()
+
+
+def _ungated_ssh(rows):          # the lane rule's splitting input: an ungated ssh row has no lane
+    _at(rows, _EXEC).update(gate=None, lane=None)
+
+
+def _excluded_twin(rows):        # lens 6 L6-3: a GET at the path, excluded; the state is still the parent's /current
+    rows.append({**_at(rows, _GETCFG), "path": _START[2], "excluded": True})
+    _at(rows, _START).update(twin=_START[2])
+
+
+def _excluded_read(rows):        # lens 6 L6-4: an excluded read beside a served /current reads no state (it is a read)
+    rows.append({**_at(rows, ("pve", "GET", _CUR)), "path": "/nodes/{node}/qemu/{vmid}/status/spiceproxy",
+                 "excluded": True})
+
+
+def _agent_path_elsewhere(rows):  # lens 6 L6-5: the agent lane is pve's; a gated pbs row under that prefix has none
+    rows.append({**_at(rows, _GETCFG), "product": "pbs", "path": "/nodes/{node}/qemu/{vmid}/agent/ping", "gate": "x"})
+
+
+@pytest.mark.parametrize("forge", [_ungated_ssh, _excluded_twin, _excluded_read, _agent_path_elsewhere])
+def test_the_loader_is_no_stricter_than_the_build(monkeypatch, forge):
+    """Each forge is a shape the build writes that a mutant of the loader (one that widened a rule:
+    a lane for every row, a state for a read, a state only beside no GET at all, the agent lane on
+    every product) refused while the shipped file stayed green. The loader derives, never widens."""
+    from conftest import _clear_data_caches
+
+    doc = _shipped()
+    forge(doc["rows"])
+    _serve(monkeypatch, doc)
+    try:
+        assert engine.resolve("pve", "GET", "/version").path == "/version"
+        lane = None if forge is _ungated_ssh else "shell"
+        assert engine.resolve("pve", "POST", "/nodes/n/lxc/101/exec").lane == lane
+        assert engine.resolve("pve", "POST", "/nodes/n/qemu/101/status/start").state == _CUR
+    finally:
+        monkeypatch.undo()
+        _clear_data_caches()
+
+def test_every_column_damage_names_the_words_it_dies_on():
+    assert set(_WORDS) == set(_COLUMN_DAMAGE)
 
 
 #: Lens 4 L4-3: the named-row check's own cases. Each column keeps the shape the build writes
@@ -237,6 +386,26 @@ def test_an_authored_row_never_answers_before_the_vendors_whatever_the_files_ord
     try:
         row = engine.resolve("pve", "POST", "/nodes/n/lxc/101/exec")
         assert (row.wire, row.path) == ("http", "/nodes/{node}/lxc/{vmid}/{what}")
+    finally:
+        monkeypatch.undo()
+        _clear_data_caches()
+
+
+def test_the_vendors_rows_keep_the_files_order_among_themselves(monkeypatch):
+    """Lens 4 L4-7: the wire sort is stable, so two http rows that both match a path answer in
+    the file's order; a sort by path would put the literal `start` ahead of the `{what}` wildcard."""
+    from conftest import _clear_data_caches
+
+    engine.resolve("pve", "POST", "/nodes/n/qemu/101/status/start")
+    doc = _shipped()
+    rows = doc["rows"]
+    start = _at(rows, _START)
+    wild = {**start, "path": "/nodes/{node}/qemu/{vmid}/status/{what}", "expect": None,   # state: the parent's /current
+            "params": {**start["params"], "what": {"type": "string", "optional": False, "description": "what"}}}
+    rows.insert(0, wild)
+    _serve(monkeypatch, doc)
+    try:
+        assert engine.resolve("pve", "POST", "/nodes/n/qemu/101/status/start").path == wild["path"]
     finally:
         monkeypatch.undo()
         _clear_data_caches()

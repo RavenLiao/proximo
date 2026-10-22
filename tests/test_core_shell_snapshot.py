@@ -217,6 +217,9 @@ def test_a_capture_this_door_would_not_write_rolls_nothing_back(box, monkeypatch
     f"/nodes/{NODE}/lxc/abc/exec",            # the vendor's vmid is an integer; `{vmid}` matched a word
     f"/nodes/{NODE}/lxc/{CT}/exec/",          # not the row's own spelling (a trailing slash)
     f"/nodes/pv%65%31/lxc/{CT}/exec",         # not the row's own spelling (an encoded node)
+    f"/nodes/{NODE}/lxc/0101/exec",           # int() takes it; the row's own spelling is 101 (release lens R5)
+    f"/nodes/{NODE}/lxc/+101/exec",
+    f"/nodes/{NODE}/lxc/1e2/exec",
 ])
 def test_a_capture_whose_target_is_not_a_container_commands_own_spelling_rolls_nothing_back(box, monkeypatch, target):
     """Lens 3 F3: `_rollback` resolved the target by template, so a forged ledger-verified capture

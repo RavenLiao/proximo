@@ -210,11 +210,11 @@ The six tools with typed inputs: [`docs/TOOLS.md`](docs/TOOLS.md) · the walkthr
 
 **The core alone, no model in the loop:** the same install ships `proximo-core pve GET /nodes/pve1/status` (or `--plan` on any address: the verdict and the published schema, touching nothing). Its import closure is `httpx` and nothing else (measured by a test); every published address on all four products; the same arm gate, tiers and audit ledger as the MCP door. The core has its own network doors, each the 0.44 face's perimeter with the core behind it: `proximo-mcp-http` (MCP over streamable HTTP), `proximo-http` (REST, `POST /tools/{name}` with an OpenAPI document) and `proximo-a2a` (an Agent2Agent card whose skills are the six tools).
 
-> 📦 **`0.46.1`**: on [PyPI](https://pypi.org/project/proximo-proxmox/), [GitHub](https://github.com/john-broadway/proximo/releases/tag/v0.46.1), and [GHCR](https://github.com/john-broadway/proximo/pkgs/container/proximo) (signed multi-arch image).
+> 📦 **`0.46.2`**: on [PyPI](https://pypi.org/project/proximo-proxmox/), [GitHub](https://github.com/john-broadway/proximo/releases/tag/v0.46.2), and [GHCR](https://github.com/john-broadway/proximo/pkgs/container/proximo) (signed multi-arch image).
 >
-> **New in 0.46.1 (every column, every rollback target, held to its rule).** The loader refuses a data file whose columns break a rule the build keeps (a lane on an ungated row, a state beside a served twin, a mutation with no task to poll, a snapshot net off its own container), where 0.46.0 checked only that the addresses they named existed; the vendor's rows answer before the shell lane's whatever the file's order. `undo` rolls a container back only to a target that round-trips through the engine's own rule: bound, coerced to the vendor's types, refilled and compared to the capture's spelling. Lens 3's residuals folded, lens 4 over the fold; every fold is a test that dies with its mutant replanted.
+> **New in 0.46.2 (six columns derived; two dead example keys removed).** The loader computes `access`, twin, state, expect, task status and lane from the data file's own rows the way the build does and refuses the file on the first column that differs, and holds a `creates` to the build's eligibility rule; 0.46.1 took `access` as written, so a forged POST marked read was served as a read. `packaging/targets.example.toml` no longer shows `ssh_target` or `node`, two keys the core never read, and a test fails on any key the loader ignores.
 >
-> Recent: **0.46.0** moved every address and every judgement into one data file and gave the door a contract. See [SECURITY.md](SECURITY.md) for what each control honestly holds.
+> Recent: **0.46.1** held the data file's cross-column rules and a container rollback's target to the build's rule, and moved certifi past PYSEC-2026-4320. See [SECURITY.md](SECURITY.md) for what each control honestly holds.
 
 Proximo runs **on your machine**, on demand. No daemon, no open port.
 
@@ -251,15 +251,13 @@ One container is the demo. A cluster is the point.
 
 ## Status: the arena record
 
-- 🩸 **0.46.1**: **Every column, every rollback target, held to its rule.** The loader holds the one data file to
-  the seven cross-column rules the build keeps and refuses it whole on the first row that breaks one; the vendor's
-  rows answer before the authored shell rows whatever the file's order. A container rollback's target is resolved
-  through the engine's own rule: bound, coerced to the vendor's types, refilled and compared to the capture's
-  spelling. Lens 3's residuals folded, lens 4 over the fold; three tests that could not fail, fixed; a surviving
-  mutant filed as equivalent, split; 1,738 tests.
+- 🩸 **0.46.2**: **Six columns derived; two dead example keys removed.** `access` and five more
+  columns are computed from the data file's own rows the way the build does, and the file is refused on the first
+  column that differs (0.46.1 took `access` as written); a `creates` is held to the build's eligibility rule. The example registry no longer teaches `ssh_target` or
+  `node`, which the core never read; a test holds it to the loader. 1,780 tests.
 _Every release before it (every pillar, every redteam, every fix) lives in [`CHANGELOG.md`](./CHANGELOG.md)._
 
-**The numbers, honestly:** six tools over 1,804 published addresses, governed by what each address is (its method decides read or write, total by construction; the blast-radius tier is the one human-authored column, and an untiered mutation is refused, armed or not). **1,738 in-process tests** (ruff + pyright clean) pin the engine, the six pillars, the doors and the records, and a gate round neuters each pillar's gate one at a time and asks the suite to notice. This workspace administers its own Proxmox estate through Proximo daily (dogfood).
+**The numbers, honestly:** six tools over 1,804 published addresses, governed by what each address is (its method decides read or write, total by construction; the blast-radius tier is the one human-authored column, and an untiered mutation is refused, armed or not). **1,780 in-process tests** (ruff + pyright clean) pin the engine, the six pillars, the doors and the records, and a gate round neuters each pillar's gate one at a time and asks the suite to notice. This workspace administers its own Proxmox estate through Proximo daily (dogfood).
 
 **Proven live** (not mocks): the governed path end to end against a real PVE 9 node through this door, plans reading the live target, receipts on the keyed chain, before-state captures and their restore. The 0.44 wrappers' live record (a 3-node cluster, PBS, PMG, PDM, a real cross-datacenter move) stays in [`CHANGELOG.md`](./CHANGELOG.md) where it was earned; it is not re-claimed for the core.
 **Not yet proven — said plainly:** a small local model finishing a whole task through this door. Measured and driven on this release: a stock 1.5B behind llama.cpp with a 4,096-token context the server enforces, against a real PVE node, read-only. Its calls landed and the door's refusals named the fix each time (an invented field, the real ones listed); the prompt peaked at 3,074 tokens; the model did not finish the task, it invented a number. The window holds; a 1.5B does not. *Hardware*-watchdog fencing (needs physical iTCO/IPMI), and behavior at production scale. The 20 held addresses are never fired: refused by sentence, by design, not a gap.

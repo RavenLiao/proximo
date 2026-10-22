@@ -1,3 +1,16 @@
+proximo (0.46.2-1) UNRELEASED; urgency=medium
+
+  * Track upstream 0.46.2 (patch: the loader derives access, twin, state,
+    expect, task status and lane from the data file's own rows the way the
+    build does, refuses the file on the first column that differs, and holds
+    a creates to the build's eligibility rule;
+    0.46.1 took access as written, so a POST marked read was served as a read.
+    packaging/targets.example.toml no longer shows ssh_target or node, two
+    keys the core never read; a test holds the example to the loader.
+    1,780 tests. Door contract 1 unchanged; proximo.json.gz unchanged.)
+
+ -- John Broadway <271895126+john-broadway@users.noreply.github.com>  Thu, 22 Oct 2026 02:47:55 +0000
+
 proximo (0.46.1-1) UNRELEASED; urgency=medium
 
   * Track upstream 0.46.1 (patch: every column and every rollback target held
