@@ -2,6 +2,16 @@
 
 All notable changes to Proximo. Format loosely follows Keep a Changelog; versions are SemVer.
 
+## [0.48.1] — 2026-10-25
+
+**Pool tokens read their pool; what a clone needs.** Issue #100 findings 2 and 3, measured again on a PVE 9.2.2 lab node. A patch: `mint`'s printed recipe and SETUP; the engine, the data file and the door are unchanged.
+
+**Fixed: `mint pve --write --scope /pool/<name>` left both tokens unable to read the pool.** In PVE an ACL on a deeper path replaces what a principal inherits there. The recipe's `PVEVMAdmin` on `/pool/<name>` for the user replaced the user's `PVEAuditor` from `/`, so the read token (its own rights intersected with the user's) kept only `VM.Audit` and `VM.GuestAgent.Audit` on the pool, the write token held no `Pool.Audit`, and `GET /pools/<name>` answered 403 to both. For every pool path in a PVE write scope (`/pool` or `/pool/<name>`) the recipe now also prints the grant of `PVEAuditor` on that path to the user and the write token, and says why; on the lab both reads came back and the only privileges added were the five audit ones. `mint` prints a recipe and calls nothing, so **a token already minted for a pool is not fixed by upgrading**: run the two `PVEAuditor` lines once, or re-mint. A guest scope's (`/vms/<id>`) grant commands and the other planes' recipes are unchanged.
+
+**New: what a clone outside the scope needs, said where you mint.** A pool-scoped token, as minted, cannot clone a template kept outside the pool. Hunted on the lab from the vendor's own refusals, which name one missing privilege at a time, full and linked clones alike: `VM.Clone` on `/vms/<template>`, `Datastore.AllocateSpace` on `/storage/<target>` and `SDN.Use` on the bridge (`/sdn/zones/localnetwork/<bridge>` for a plain Linux bridge), each to the token and the user; the built-in roles `PVETemplateUser`, `PVEDatastoreUser` and `PVESDNUser` carry them, each with only its own audit privilege beside it. The PVE write recipe's grant step says so, and SETUP has a section, the commands, and two troubleshooting rows. Proximo does not grant those paths for you: which template, storage and bridge are yours to name. Reported with reproductions by kevwillow.
+
+**1,973 tests** on Python 3.12 and 3.13; the mcp 1.x leg runs 1,971 and skips the two 2.x-only seams.
+
 ## [0.48.0] — 2026-10-25
 
 **A restore says what identity it keeps.** A minor: a new authored record and a new plan key (door contract 2). No verdict moves, and nothing Proximo sends the vendor changes.

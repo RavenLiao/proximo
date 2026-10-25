@@ -182,6 +182,40 @@ The served file (`PROXIMO_TOKEN_PATH`) is never one of the two sources: `arm` an
 the write or the read token's bytes **into** it, and a source pointed at the served path would make
 the check compare a file to itself, so Proximo refuses that configuration.
 
+### A pool scope, and cloning into it
+
+`--scope /pool/<name>` is the usual way to give an agent a sandbox: it may manage the guests in that
+pool and nothing else. Two things about PVE's ACLs catch people here, both measured on PVE 9.2.2:
+
+- **A deeper grant replaces what is inherited there.** The write grant puts `PVEVMAdmin` on
+  `/pool/<name>` for the user, and that replaces the user's `PVEAuditor` from `/` on that path. The
+  read token's rights are the user's and its own intersected, so on the pool it keeps only
+  `VM.Audit` and `VM.GuestAgent.Audit`, the write token has no `Pool.Audit`, and a read of the pool
+  answers 403 to both. `mint` prints the fix with the write grant: `PVEAuditor` on the same path for
+  the user and the write token. It adds audit privileges only. A token minted before 0.48.1 needs
+  those two lines run once.
+- **A clone reaches outside the pool.** Cloning a template that lives outside the pool (full or
+  linked) also needs, for the write token **and** the user: `VM.Clone` on `/vms/<template>`
+  (`PVETemplateUser`), `Datastore.AllocateSpace` on `/storage/<target>` (`PVEDatastoreUser`) and
+  `SDN.Use` on the bridge, `/sdn/zones/localnetwork/<bridge>` for a plain Linux bridge
+  (`PVESDNUser`). Each of those roles adds only its own audit privilege beside the one named. Proximo
+  does not guess those paths. The vendor's 403 names each missing path and
+  privilege in turn, and `proximo-core pve GET /access/permissions 'userid=<user>!write'` shows what
+  the token holds.
+
+```bash
+# after the mint's grants, for a template 9000 on local-lvm and the bridge vmbr0:
+pveum acl modify /vms/9000 --tokens 'proximo@pve!write' --roles PVETemplateUser
+pveum acl modify /vms/9000 --users 'proximo@pve' --roles PVETemplateUser
+pveum acl modify /storage/local-lvm --tokens 'proximo@pve!write' --roles PVEDatastoreUser
+pveum acl modify /storage/local-lvm --users 'proximo@pve' --roles PVEDatastoreUser
+pveum acl modify /sdn/zones/localnetwork/vmbr0 --tokens 'proximo@pve!write' --roles PVESDNUser
+pveum acl modify /sdn/zones/localnetwork/vmbr0 --users 'proximo@pve' --roles PVESDNUser
+```
+
+Re-running `mint` rotates the token, and the new token needs these grants again. Both rules were
+reported, with reproductions, by kevwillow in issue #100.
+
 ### Turning write on and off — `proximo arm` / `proximo disarm`
 
 Armed means one thing: the token the door serves (`PROXIMO_TOKEN_PATH`) is byte-for-byte the write
@@ -453,6 +487,8 @@ The moment the token is gone, Proximo can do nothing at all.
 | **401 Unauthorized** | Token secret wrong, or the file isn't exactly `user@realm!tokenid=secret` (no trailing newline). |
 | **`refusing ... group/other-accessible`** | Your token (or audit-key) file is readable by other users on the box. The message names the file — `chmod 600` it. |
 | **403 from the vendor** | The token lacks that privilege. Proxmox is the one refusing; grant the role to both the token and its user, scoped to the path you mean. |
+| **`403 Permission check failed (/pool/<name>, Pool.Audit)`** | A write grant on the pool replaced the user's inherited `PVEAuditor` there. Add `PVEAuditor` on `/pool/<name>` for the user and the write token ([A pool scope](#a-pool-scope-and-cloning-into-it)); `mint` prints it. |
+| **`403 ... (/vms/<template>, VM.Clone)` on a clone into a pool** | The template lives outside the scope. A clone needs `VM.Clone`, `Datastore.AllocateSpace` and `SDN.Use` beyond it ([A pool scope](#a-pool-scope-and-cloning-into-it)). |
 | **`needs: "arm"` / `"tier"` / `"held"`** | Not errors: the refusal names what would change the answer. Arm (Step 6); an untiered address is never mutated; a held one never opens. |
 | **`... is set, and the core no longer reads it`** | A switch of an older release is still in your env (`PROXIMO_SCOPE_PATH`, `PROXIMO_ARM_TTL`, `PROXIMO_AUDIT_KEYED=off`). The door refuses to start rather than quietly run without the gate you thought you had. Unset it; the message says the vendor's way. |
 | **Connection refused / timeout** | Wrong host or port (the Proxmox API is `:8006`), or a firewall in the way. |

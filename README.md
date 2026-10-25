@@ -210,11 +210,11 @@ The six tools with typed inputs: [`docs/TOOLS.md`](docs/TOOLS.md) · the walkthr
 
 **The core alone, no model in the loop:** the same install ships `proximo-core pve GET /nodes/pve1/status` (or `--plan` on any address: the verdict and the published schema, touching nothing). Its import closure is `httpx` and nothing else (measured by a test); every published address on all four products; the same arm gate, tiers and audit ledger as the MCP door. The core has its own network doors, each the 0.44 face's perimeter with the core behind it: `proximo-mcp-http` (MCP over streamable HTTP), `proximo-http` (REST, `POST /tools/{name}` with an OpenAPI document) and `proximo-a2a` (an Agent2Agent card whose skills are the six tools).
 
-> 📦 **`0.48.0`**: on [PyPI](https://pypi.org/project/proximo-proxmox/), [GitHub](https://github.com/john-broadway/proximo/releases/tag/v0.48.0), and [GHCR](https://github.com/john-broadway/proximo/pkgs/container/proximo) (signed multi-arch image).
+> 📦 **`0.48.1`**: on [PyPI](https://pypi.org/project/proximo-proxmox/), [GitHub](https://github.com/john-broadway/proximo/releases/tag/v0.48.1), and [GHCR](https://github.com/john-broadway/proximo/pkgs/container/proximo) (signed multi-arch image).
 >
-> **New in 0.48.0 (a restore says what identity it keeps).** A QEMU restore without `unique` keeps the backup's MAC and SMBIOS UUID, a container restore its MAC: right for a rebuild in place, two machines with one identity for a copy. The plan now says so and the receipt keeps the sentence, from a new authored record, [`records/notes.toml`](records/notes.toml): advice read from the call's own arguments, never a verdict. This release adds no default and changes nothing Proximo sends the vendor. Door contract 2.
+> **New in 0.48.1 (pool tokens read their pool; what a clone needs).** In PVE an ACL on a deeper path replaces what is inherited there, so `mint pve --write --scope /pool/<name>` left both tokens unable to read the pool; the recipe now also prints the grant of `PVEAuditor` on the pool to the user and the write token, audit privileges only (a token minted before needs those two lines run once). The write recipe and [SETUP](docs/SETUP.md#a-pool-scope-and-cloning-into-it) say what a clone of a template outside the scope needs: `VM.Clone`, `Datastore.AllocateSpace` and `SDN.Use`, measured from the vendor's own refusals.
 >
-> Recent: **0.47.0** refused consent grants the agent's own user owns and wrote the ledger format down, with a standard-library checker. See [SECURITY.md](SECURITY.md) for what each control honestly holds.
+> Recent: **0.48.0** made a restore without `unique` say, in its plan and its receipt, that it keeps the backup's identity. See [SECURITY.md](SECURITY.md) for what each control honestly holds.
 
 Proximo runs **on your machine**, on demand. No daemon, no open port.
 
@@ -251,13 +251,13 @@ One container is the demo. A cluster is the point.
 
 ## Status: the arena record
 
-- 🩸 **0.48.0**: **A restore says what identity it keeps.** A restore without `unique` keeps the
-  backup's MAC (and a VM's SMBIOS UUID); the plan says so and the receipt keeps it, from an authored
-  record of plan notes that never moves a verdict. Proved on a PVE 9.2.2 node for a VM (the container
-  line rests on the vendor's sentence); the plan and the receipt read `unique` the same way. 1,964 tests.
+- 🩸 **0.48.1**: **Pool tokens read their pool; what a clone needs.** A pool-scoped PVE write
+  recipe also prints a `PVEAuditor` grant on the pool for the user and the write token, so neither
+  loses the pool read to PVE's deeper-ACL rule (an existing token needs it run once); the recipe and SETUP say what a clone outside the scope needs.
+  Both measured on a PVE 9.2.2 node. 1,973 tests.
 _Every release before it (every pillar, every redteam, every fix) lives in [`CHANGELOG.md`](./CHANGELOG.md)._
 
-**The numbers, honestly:** six tools over 1,804 published addresses, governed by what each address is (its method decides read or write, total by construction; the blast-radius tier is the one human-authored column, and an untiered mutation is refused, armed or not). **1,964 in-process tests** (ruff + pyright clean) pin the engine, the six pillars, the doors and the records, and a gate round neuters each pillar's gate one at a time and asks the suite to notice. This workspace administers its own Proxmox estate through Proximo daily (dogfood).
+**The numbers, honestly:** six tools over 1,804 published addresses, governed by what each address is (its method decides read or write, total by construction; the blast-radius tier is the one human-authored column, and an untiered mutation is refused, armed or not). **1,973 in-process tests** (ruff + pyright clean) pin the engine, the six pillars, the doors and the records, and a gate round neuters each pillar's gate one at a time and asks the suite to notice. This workspace administers its own Proxmox estate through Proximo daily (dogfood).
 
 **Proven live** (not mocks): the governed path end to end against a real PVE 9 node through this door, plans reading the live target, receipts on the keyed chain, before-state captures and their restore. The 0.44 wrappers' live record (a 3-node cluster, PBS, PMG, PDM, a real cross-datacenter move) stays in [`CHANGELOG.md`](./CHANGELOG.md) where it was earned; it is not re-claimed for the core.
 **Not yet proven — said plainly:** a small local model finishing a whole task through this door. Measured and driven on this release: a stock 1.5B behind llama.cpp with a 4,096-token context the server enforces, against a real PVE node, read-only. Its calls landed and the door's refusals named the fix each time (an invented field, the real ones listed); the prompt peaked at 3,074 tokens; the model did not finish the task, it invented a number. The window holds; a 1.5B does not. *Hardware*-watchdog fencing (needs physical iTCO/IPMI), and behavior at production scale. The 20 held addresses are never fired: refused by sentence, by design, not a gap.

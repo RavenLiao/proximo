@@ -1,3 +1,14 @@
+proximo (0.48.1-1) UNRELEASED; urgency=medium
+
+  * Track upstream 0.48.1 (patch: a pool-scoped PVE write recipe also
+    grants PVEAuditor on the pool to the user and the write token, since an
+    ACL on a deeper path replaces what is inherited there and neither token
+    could read the pool; the recipe and SETUP say what a clone of a
+    template outside the scope needs: VM.Clone, Datastore.AllocateSpace and
+    SDN.Use. Engine, data file and door unchanged. 1,973 tests.)
+
+ -- John Broadway <271895126+john-broadway@users.noreply.github.com>  Sun, 25 Oct 2026 01:50:00 +0000
+
 proximo (0.48.0-1) UNRELEASED; urgency=medium
 
   * Track upstream 0.48.0 (minor: a restore says what identity it keeps.

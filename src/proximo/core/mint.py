@@ -168,6 +168,31 @@ def _pve(user: str, name: str, file: str, write: bool, scope: list[str], ttl: in
     grants = [line for path in scope for line in (
         f"pveum acl modify {path} --tokens '{authid}' --roles {role}",
         f"pveum acl modify {path} --users '{user}' --roles {role}")]
+    grant_notes = ["A --privsep 1 token's permissions are the INTERSECTION of the user's ACL and the "
+                   "token's: grant both, or a new user (no ACL) leaves the token able to do nothing."]
+    # A DEEPER ACL REPLACES WHAT A PRINCIPAL INHERITS THERE (#100, measured on PVE 9.2.2): the
+    # write role on /pool/<name> for the user replaced the user's PVEAuditor from /, so the read
+    # token kept only VM.Audit there and neither token could read the pool. The audit role on the
+    # same path, for the user and the write token, gives the reads back and adds only audit.
+    pools = [path for path in scope if path == "/pool" or path.startswith("/pool/")] if write else []
+    for path in pools:
+        grants += [f"pveum acl modify {path} --tokens '{authid}' --roles {_READ_ROLE['pve']}",
+                   f"pveum acl modify {path} --users '{user}' --roles {_READ_ROLE['pve']}"]
+    if pools:
+        grant_notes.append(
+            f"An ACL on a deeper path replaces what a user or token inherits there: {role} on "
+            f"{pools[0]} for the user replaces the {_READ_ROLE['pve']} it inherits (the read recipe "
+            f"grants it on /), and without the {_READ_ROLE['pve']} lines here neither token holds "
+            f"Pool.Audit and a read of the pool answers 403. They add audit privileges only.")
+    if write:
+        grant_notes.append(
+            "This grants the scope and nothing outside it. A clone (full or linked) of a template "
+            "the scope does not cover also needs, for the token AND the user: VM.Clone on "
+            "/vms/<template> (PVETemplateUser), Datastore.AllocateSpace on /storage/<target> "
+            "(PVEDatastoreUser) and SDN.Use on the bridge, /sdn/zones/localnetwork/<bridge> for a "
+            "plain Linux bridge (PVESDNUser); each role adds only its own audit privilege beside it. "
+            "Proximo does not guess those paths; the vendor's 403 names each path and privilege in "
+            "turn. Re-running this recipe rotates the token, and a new token needs those grants again.")
     return [
         _step("create", "mint the token on the PVE host (as root)", [create], [
             "pvesh + JSON is the robust capture: `pveum user token add` prints the secret "
@@ -175,10 +200,7 @@ def _pve(user: str, name: str, file: str, write: bool, scope: list[str], ttl: in
         ]),
         _step("write", "the token file (what Proximo reads)", [f"chmod 600 {file}"],
               [f"Exactly one line: {authid}=SECRET. PVE uses '='.", _SEPARATOR_HINT]),
-        _step("grant", f"grant {role} on {', '.join(scope)} to the token AND the user", grants, [
-            "A --privsep 1 token's permissions are the INTERSECTION of the user's ACL and the "
-            "token's: grant both, or a new user (no ACL) leaves the token able to do nothing.",
-        ]),
+        _step("grant", f"grant {role} on {', '.join(scope)} to the token AND the user", grants, grant_notes),
         _wire("pve", file, write, []),
         _verify("pve", authid, write),
     ]

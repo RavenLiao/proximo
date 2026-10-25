@@ -456,3 +456,70 @@ def test_a_token_file_under_a_ssh_directory_is_refused(value):
     """`> ~/.ssh/authorized_keys` as root is a lockout, not a token (lens 2026-10-16)."""
     with pytest.raises(ValueError, match=r"\.ssh"):
         mint.build_recipe("pve", write=True, scope=["/"], token_file=value)
+
+
+# --- a pool scope and the vendor's deeper-ACL rule (#100, measured on PVE 9.2.2, 2026-10-24) ---
+# An ACL on a deeper path REPLACES what a principal inherits there. The write recipe's
+# PVEVMAdmin on /pool/<name> for the USER replaced the user's inherited PVEAuditor on that path,
+# so the read token (user ∩ token) kept only VM.Audit and VM.GuestAgent.Audit there, the write
+# token held no Pool.Audit, and GET /pools/<name> answered 403 to both. PVEAuditor on the same
+# path for the user and the write token gave both reads back and added only audit privileges.
+
+def _pve_grant(scope):
+    return _step(mint.build_recipe("pve", write=True, scope=scope), "grant")
+
+
+def test_a_pool_scope_also_grants_audit_on_the_pool_to_the_user_and_the_write_token():
+    g = _pve_grant(["/pool/lab"])
+    cmds = g["commands"]
+    assert cmds == [
+        "pveum acl modify /pool/lab --tokens 'proximo@pve!write' --roles PVEVMAdmin",
+        "pveum acl modify /pool/lab --users 'proximo@pve' --roles PVEVMAdmin",
+        "pveum acl modify /pool/lab --tokens 'proximo@pve!write' --roles PVEAuditor",
+        "pveum acl modify /pool/lab --users 'proximo@pve' --roles PVEAuditor",
+    ]
+    said = " ".join(g["notes"])
+    assert "replaces" in said and "Pool.Audit" in said and "inherits" in said
+
+
+@pytest.mark.parametrize("path", ["/vms/101", "/pools/lab", "/poolx", "/storage/pool"])
+def test_a_scope_that_is_not_a_pool_grants_no_audit_line(path):
+    """Lens: `startswith("/pool")` passed every test; a look-alike is not a pool."""
+    g = _pve_grant([path])
+    assert not any("PVEAuditor" in c for c in g["commands"]) and len(g["commands"]) == 2
+    assert "Pool.Audit" not in " ".join(g["notes"])
+
+
+def test_the_bare_pool_path_is_every_pool_and_gets_the_audit_pair_too():
+    cmds = _pve_grant(["/pool"])["commands"]
+    assert [c for c in cmds if "PVEAuditor" in c] == [
+        "pveum acl modify /pool --tokens 'proximo@pve!write' --roles PVEAuditor",
+        "pveum acl modify /pool --users 'proximo@pve' --roles PVEAuditor"]
+
+
+def test_each_pool_in_a_mixed_scope_gets_its_audit_line_and_nothing_else_does():
+    cmds = _pve_grant(["/vms/101", "/pool/a", "/pool/b"])["commands"]
+    audited = sorted(re.findall(r"acl modify (\S+) --\S+ '\S+' --roles PVEAuditor", "\n".join(cmds)))
+    assert audited == ["/pool/a", "/pool/a", "/pool/b", "/pool/b"]
+
+
+def test_a_pve_write_recipe_says_what_a_clone_needs_beyond_the_scope():
+    """Measured on PVE 9.2.2 (2026-10-25): with the pool-scoped grants, a full and a linked clone
+    of a template outside the pool were refused in turn on exactly these three, and ran once each
+    was granted to the token and the user by the role named here."""
+    said = " ".join(_pve_grant(["/pool/lab"])["notes"])
+    for want in ("VM.Clone on /vms/<template> (PVETemplateUser)",
+                 "Datastore.AllocateSpace on /storage/<target> (PVEDatastoreUser)",
+                 "/sdn/zones/localnetwork/<bridge>", "SDN.Use", "(PVESDNUser)", "the token AND the user"):
+        assert want in said, want
+
+
+def test_the_read_recipe_and_the_other_planes_are_unchanged_by_the_pool_rule():
+    # lens: the read recipe at its default scope `/` had no pool to leak onto; scope it to one
+    g = _step(mint.build_recipe("pve", scope=["/pool/lab"]), "grant")
+    assert g["commands"] == ["pveum acl modify /pool/lab --tokens 'proximo@pve!read' --roles PVEAuditor",
+                             "pveum acl modify /pool/lab --users 'proximo@pve' --roles PVEAuditor"]
+    assert "Pool.Audit" not in " ".join(g["notes"]) and "VM.Clone" not in " ".join(g["notes"])
+    for product in ("pbs", "pdm"):
+        r = mint.build_recipe(product, write=True, scope=["/pool/lab"] if product == "pdm" else ["/datastore/x"])
+        assert "Pool.Audit" not in " ".join(_step(r, "grant")["notes"])
