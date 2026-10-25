@@ -86,6 +86,7 @@ class Row:
     secret: Rule = _NO_RULE      # what the answer withholds: the own line merged with the read twin's
     arg_secrets: frozenset[str] = frozenset()   # argument names the ledger fingerprints (a secret the caller sends)
     creates: str | None = None   # a judged create (undo.toml): a failed read-back is absence, the restore its DELETE
+    notes: tuple[Mapping[str, Any], ...] = ()   # what the plan says when the arguments meet a condition (notes.toml)
 
     @property
     def address(self) -> str:
@@ -125,7 +126,9 @@ def row_of(r: Mapping[str, Any]) -> Row:
                expect=MappingProxyType(r["expect"]) if r["expect"] else None,
                net=MappingProxyType(r["net"]) if r["net"] else None, task_status=r["task_status"],
                secret=(frozenset(x["drop"]), frozenset(x["userinfo"]), frozenset(x["rows"]), x["text"], x["bearer"])
-               if x else _NO_RULE, arg_secrets=frozenset(r["arg_secrets"]), creates=r["creates"])
+               if x else _NO_RULE, arg_secrets=frozenset(r["arg_secrets"]), creates=r["creates"],
+               notes=tuple(MappingProxyType({**n, "given": tuple(n["given"]), "not_given": tuple(n["not_given"])})
+                           for n in r["notes"]))
 
 
 @cache
@@ -332,6 +335,8 @@ def plan(row: Row, args: dict[str, Any] | None = None, path: str | None = None,
         "arguments": ledgered(args, None, _plan_rule(row)) if args else args,
         "published_parameters": dict(row.params),
     }
+    if held := notes_held(row, args):
+        out["notes"] = held
     if verdict.consent_id:
         out["consent_id"] = verdict.consent_id
         out["consent"] = spine.consent_state(verdict.consent_id, _audit_dir(ledger_cfg) or ".")
@@ -372,6 +377,52 @@ def plan(row: Row, args: dict[str, Any] | None = None, path: str | None = None,
 # target already holds). The tier's authored sentence is the blast radius that has authority.
 
 _ID_KEYS = ("id", "storage")      # identities the vendor enforces; a `name` is a display name
+
+
+# ---- PLAN's notes (notes.toml) ------------------------------------------------------------------
+# A consequence the tier cannot say (a restore without `unique` keeps the archive's identity). The
+# condition reads the call's own arguments and nothing else: never a read, so a plan is never
+# quieter for knowing less, and `execute` judges it the same way for the receipt. Advice: no
+# note changes a verdict.
+
+TRUE_WORDS = frozenset({"1", "true", "yes", "y", "on", "t"})     # a boolean's spellings, as coerce_args reads them
+FALSE_WORDS = frozenset({"0", "false", "no", "n", "off", "f", ""})
+
+
+def bool_word(value: str) -> bool | None:
+    """A boolean argument spelled as a string: True, False, or None for a spelling no one reads."""
+    lowered = value.strip().lower()
+    return True if lowered in TRUE_WORDS else False if lowered in FALSE_WORDS else None
+
+
+def _given(row: Row, name: str, args: Mapping[str, Any]) -> bool | None:
+    """Whether the call gives `name`, as the vendor will read it: True, False, or None when that
+    cannot be told before the wire (a boolean of 2, a list, a string no one reads as a boolean).
+    The plan asks this of the raw arguments and the receipt of the coerced ones; `coerce_args`
+    reads a boolean string through the same `bool_word` and passes every other value through
+    unchanged, so the two never judge the same call differently."""
+    value = args.get(name)
+    if value is None:
+        return False
+    published = _published(row, name)
+    if (row.params[published].get("type") if published else None) != "boolean":
+        return not (isinstance(value, str) and not value.strip())    # a value is given unless blank
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return bool_word(value)
+    if type(value) is int:                       # 1.0 is not definite: the vendor's boolean refuses it
+        return True if value == 1 else False if value == 0 else None
+    return None
+
+
+def notes_held(row: Row, args: Mapping[str, Any]) -> list[dict[str, str]]:
+    """The row's notes whose condition these arguments may meet, in authored order. ONLY A
+    DEFINITE ANSWER SILENCES A NOTE: a `given` name surely absent, or a `not_given` name surely
+    given. What cannot be told shows the note, the safe direction for advice."""
+    return [{"says": n["says"], "why": n["why"]} for n in row.notes
+            if not any(_given(row, k, args) is False for k in n["given"])
+            and not any(_given(row, k, args) is True for k in n["not_given"])]
 
 
 def _read_of(row: Row) -> tuple[Row | None, str | None, str | None, str | None]:
@@ -603,11 +654,9 @@ def coerce_args(row: Row, args: dict[str, Any]) -> dict[str, Any]:
             # harmless until the parameter is named `dry-run`: "y" silently became False and a
             # preview became a live run. 59 mutating addresses publish a boolean of that shape.
             # An unreadable value is a question, not a default.
-            lowered = value.strip().lower()
-            if lowered in {"1", "true", "yes", "y", "on", "t"}:
-                out[name] = True
-            elif lowered in {"0", "false", "no", "n", "off", "f", ""}:
-                out[name] = False
+            word = bool_word(value)
+            if word is not None:
+                out[name] = word
             else:
                 raise ProximoError(
                     f"{row.address}: {name}={ledgered(value, name, row.secret)!r} is not a boolean "
@@ -875,8 +924,10 @@ def execute(row: Row, args: dict[str, Any] | None = None, *, cfg: wire.Plane | N
     # by the terminal row below. A process killed in between leaves this row open, which is
     # exactly what `in_flight` reports; without it the core answered "what was running when we
     # died" with nothing.
+    held = notes_held(row, args)
     preview = {"tier": row.tier, "args": ledgered(args, rule=arg_rule(row)), "consent_id": verdict.consent_id,
                "undo": undo, "intent": intent, **({"restores": restores} if restores else {}),
+               **({"notes": [n["says"] for n in held]} if held else {}),
                **({"consent_of": {"command": net_of[1], "consent_id": net_of[2]}} if net_of else {})}
     _record(ledger_cfg, "core.execute", row, outcome=EXECUTING, detail=preview, called=called,
             required=True, remote=remote)

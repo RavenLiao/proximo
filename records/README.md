@@ -12,10 +12,11 @@ What Proximo knows about every address Proxmox publishes. Nothing here ships in 
 | `shell.toml` | the shell lane's addresses (Proxmox publishes no REST call for `pct exec`), each command's snapshot net | a human, by name |
 | `diagnose.toml` | DIAGNOSE's battery: each subject's probes, the fields kept, the advisory flags and their sentences | a human, by name |
 | `vocab.toml` | find's synonyms, each quoting the vendor's own use of the word | a human, by name |
+| `notes.toml` | what a plan says when a call's arguments meet a condition (a restore without `unique` keeps the archive's identity); advice, never a verdict | a human, by name |
 
 ## The columns the build computes
 
-Beside the authored columns (`tier`, `why`, `held`, `untrusted`, `channel`, `secret`, `arg_secrets`, `creates`, `net`), the build derives what the engine would otherwise have to ask of a path, once, and writes it on the row: `lane` (the opt-in lane a gated row is served on: agent, shell, node or download), `twin` (the GET at the same path: UNDO's capture and the plan's current), `state` and `expect` (the parent's `/current` a power action is read through, and the status it aims at), `task_status` (where the plane reports a task the mutation submits), and `secret` merged with the read twin's. The engine asks the row, never "which command is this?"; a column the table cannot honour (a net on an address the door does not serve, a task address the plane does not publish) refuses the build.
+Beside the authored columns (`tier`, `why`, `held`, `untrusted`, `channel`, `secret`, `arg_secrets`, `creates`, `net`, `notes`), the build derives what the engine would otherwise have to ask of a path, once, and writes it on the row: `lane` (the opt-in lane a gated row is served on: agent, shell, node or download), `twin` (the GET at the same path: UNDO's capture and the plan's current), `state` and `expect` (the parent's `/current` a power action is read through, and the status it aims at), `task_status` (where the plane reports a task the mutation submits), and `secret` merged with the read twin's. The engine asks the row, never "which command is this?"; a column the table cannot honour (a net on an address the door does not serve, a task address the plane does not publish) refuses the build.
 
 ## The vendor's trees
 

@@ -29,7 +29,7 @@ _COLUMNS: dict[str, tuple[type, ...]] = {
     "held": (str, type(None)), "untrusted": (bool,), "channel": (str, type(None)), "wire": (str,),
     "description": (str,), "secret": (dict, type(None)), "arg_secrets": (list,), "creates": (str, type(None)),
     "lane": (str, type(None)), "twin": (str, type(None)), "state": (str, type(None)), "expect": (dict, type(None)),
-    "net": (dict, type(None)), "task_status": (str, type(None)),
+    "net": (dict, type(None)), "task_status": (str, type(None)), "notes": (list,),
 }
 _SECRET = {"drop": list, "userinfo": list, "rows": list, "text": bool, "bearer": (str, type(None))}
 #: The opt-in lanes a gated row may be served on (spine.opt_in_refusal); None is ungated or a hard gate.
@@ -138,7 +138,57 @@ def _wrong_column(r: dict[str, Any], index: dict[tuple[str, str, str], dict[str,
             return f"carries {column} {r[column]!r} where the file's own rows give {value!r}"
     if r["creates"] is not None and not _is_create(r, index):
         return "carries a create that is not an ungated POST with ungated GET and DELETE twins at its path"
+    if wrong := notes_problem(r["notes"], r):
+        return f"carries a note the build would not write: it {wrong}"
     return _wrong_net(r, index)
+
+
+#: The four keys a note carries (records/notes.toml), no more.
+NOTE_KEYS = ("given", "not_given", "says", "why")
+
+
+def note_problem(n: Any, r: dict[str, Any]) -> str | None:
+    """Why a note on row `r` would do nothing or mislead, in the words the build and the loader
+    both refuse with; None when it is a note the engine can judge. A note rides only a mutation
+    the door serves, names only parameters the address publishes, has a condition, and says
+    something with a reason. The build refuses the record line; the loader refuses the file."""
+    if not isinstance(n, dict) or set(n) != set(NOTE_KEYS):
+        return "takes exactly given, not_given, says and why"
+    if r["access"] != "mutate" or r["gate"] or r["excluded"]:
+        return "is not a mutation the door serves"
+    given, not_given = n["given"], n["not_given"]
+    if not (isinstance(given, list) and isinstance(not_given, list)
+            and all(isinstance(k, str) for k in (*given, *not_given))):
+        return "given and not_given are lists of parameter names"
+    if not given and not not_given:
+        return "has no condition; a note that is always on is the tier's sentence"
+    for k in (*given, *not_given):
+        if k not in r["params"]:
+            return f"names {k}, which the address does not publish"
+    if both := sorted(set(given) & set(not_given)):
+        return f"names {both[0]} in both given and not_given"
+    if len(set(given)) != len(given) or len(set(not_given)) != len(not_given):
+        return "names a parameter twice"
+    for k in (*given, *not_given):
+        if f"{{{k}}}" in r["path"]:
+            return f"names {k}, which the path binds; it is never an argument"
+    for k in ("says", "why"):
+        if not isinstance(n[k], str) or len(n[k].split()) < 4:
+            return f"is without a {k}; the sentence is the judgement"
+        if n[k] != n[k].strip():
+            return f"carries a {k} with space around it"
+    return None
+
+
+def notes_problem(notes: list[Any], r: dict[str, Any]) -> str | None:
+    """`note_problem` for each note on a row, and no two notes with one condition."""
+    for n in notes:
+        if wrong := note_problem(n, r):
+            return wrong
+    conds = [(tuple(sorted(n["given"])), tuple(sorted(n["not_given"]))) for n in notes]
+    if len(set(conds)) != len(conds):
+        return "carries two notes with one condition"
+    return None
 
 
 def _is_create(r: dict[str, Any], index: dict[tuple[str, str, str], dict[str, Any]]) -> bool:

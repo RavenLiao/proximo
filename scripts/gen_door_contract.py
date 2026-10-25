@@ -45,6 +45,9 @@ _CONFIG = {"plane": "pve", "method": "PUT", "path": "/nodes/n1/qemu/101/config",
 SAMPLES: list[tuple[str, dict[str, Any], dict[str, str]]] = [
     ("proximo_find", {"query": "stop a vm"}, {}),
     ("proximo_plan", dict(_STOP), {}),
+    # a restore without `unique`: the plan carries a note (notes.toml), a key no other sample fires
+    ("proximo_plan", {"plane": "pve", "method": "POST", "path": "/nodes/n1/qemu",
+                      "args": {"vmid": "103", "archive": "local:backup/vzdump-qemu-101.vma.zst"}}, {}),
     ("proximo_call", dict(_STOP), {}),
     ("proximo_call", dict(_STOP, confirm=True), {}),
     ("proximo_read", {"plane": "pve", "path": "/cluster/resources"}, {}),

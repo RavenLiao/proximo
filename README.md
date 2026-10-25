@@ -210,11 +210,11 @@ The six tools with typed inputs: [`docs/TOOLS.md`](docs/TOOLS.md) · the walkthr
 
 **The core alone, no model in the loop:** the same install ships `proximo-core pve GET /nodes/pve1/status` (or `--plan` on any address: the verdict and the published schema, touching nothing). Its import closure is `httpx` and nothing else (measured by a test); every published address on all four products; the same arm gate, tiers and audit ledger as the MCP door. The core has its own network doors, each the 0.44 face's perimeter with the core behind it: `proximo-mcp-http` (MCP over streamable HTTP), `proximo-http` (REST, `POST /tools/{name}` with an OpenAPI document) and `proximo-a2a` (an Agent2Agent card whose skills are the six tools).
 
-> 📦 **`0.47.0`**: on [PyPI](https://pypi.org/project/proximo-proxmox/), [GitHub](https://github.com/john-broadway/proximo/releases/tag/v0.47.0), and [GHCR](https://github.com/john-broadway/proximo/pkgs/container/proximo) (signed multi-arch image).
+> 📦 **`0.48.0`**: on [PyPI](https://pypi.org/project/proximo-proxmox/), [GitHub](https://github.com/john-broadway/proximo/releases/tag/v0.48.0), and [GHCR](https://github.com/john-broadway/proximo/pkgs/container/proximo) (signed multi-arch image).
 >
-> **New in 0.47.0 (self-owned grants refused; a stdlib ledger checker).** A consent grant owned by the agent's own user is refused, so an agent running as its own account cannot approve itself; on a one-user box, `PROXIMO_CONSENT_SAME_USER=advisory` accepts such grants as a speed bump and marks every one `advisory`. A grant spends once by a marker, even where the directory will not let Proximo delete it. [`docs/ledger-format.md`](docs/ledger-format.md) writes the ledger down, and `scripts/verify_ledger.py` checks a log, given its key, with the standard library alone; `audit_verify` no longer crashes on a planted row. VM snapshot, start and shutdown have their own tiers.
+> **New in 0.48.0 (a restore says what identity it keeps).** A QEMU restore without `unique` keeps the backup's MAC and SMBIOS UUID, a container restore its MAC: right for a rebuild in place, two machines with one identity for a copy. The plan now says so and the receipt keeps the sentence, from a new authored record, [`records/notes.toml`](records/notes.toml): advice read from the call's own arguments, never a verdict. This release adds no default and changes nothing Proximo sends the vendor. Door contract 2.
 >
-> Recent: **0.46.2** derived six data-file columns the way the build does and removed two dead example keys. See [SECURITY.md](SECURITY.md) for what each control honestly holds.
+> Recent: **0.47.0** refused consent grants the agent's own user owns and wrote the ledger format down, with a standard-library checker. See [SECURITY.md](SECURITY.md) for what each control honestly holds.
 
 Proximo runs **on your machine**, on demand. No daemon, no open port.
 
@@ -251,13 +251,13 @@ One container is the demo. A cluster is the point.
 
 ## Status: the arena record
 
-- 🩸 **0.47.0**: **Self-owned grants refused; a stdlib ledger checker.** A grant the agent's own
-  user owns is refused (opt-in `PROXIMO_CONSENT_SAME_USER=advisory` for one-user boxes, marked on every
-  receipt); grants spend once by a marker, judged on one stat. The ledger format is written down, a
-  stdlib checker agrees with the core on each planted break in its tests, and `audit_verify` reads rows as written. 1,858 tests.
+- 🩸 **0.48.0**: **A restore says what identity it keeps.** A restore without `unique` keeps the
+  backup's MAC (and a VM's SMBIOS UUID); the plan says so and the receipt keeps it, from an authored
+  record of plan notes that never moves a verdict. Proved on a PVE 9.2.2 node for a VM (the container
+  line rests on the vendor's sentence); the plan and the receipt read `unique` the same way. 1,964 tests.
 _Every release before it (every pillar, every redteam, every fix) lives in [`CHANGELOG.md`](./CHANGELOG.md)._
 
-**The numbers, honestly:** six tools over 1,804 published addresses, governed by what each address is (its method decides read or write, total by construction; the blast-radius tier is the one human-authored column, and an untiered mutation is refused, armed or not). **1,858 in-process tests** (ruff + pyright clean) pin the engine, the six pillars, the doors and the records, and a gate round neuters each pillar's gate one at a time and asks the suite to notice. This workspace administers its own Proxmox estate through Proximo daily (dogfood).
+**The numbers, honestly:** six tools over 1,804 published addresses, governed by what each address is (its method decides read or write, total by construction; the blast-radius tier is the one human-authored column, and an untiered mutation is refused, armed or not). **1,964 in-process tests** (ruff + pyright clean) pin the engine, the six pillars, the doors and the records, and a gate round neuters each pillar's gate one at a time and asks the suite to notice. This workspace administers its own Proxmox estate through Proximo daily (dogfood).
 
 **Proven live** (not mocks): the governed path end to end against a real PVE 9 node through this door, plans reading the live target, receipts on the keyed chain, before-state captures and their restore. The 0.44 wrappers' live record (a 3-node cluster, PBS, PMG, PDM, a real cross-datacenter move) stays in [`CHANGELOG.md`](./CHANGELOG.md) where it was earned; it is not re-claimed for the core.
 **Not yet proven — said plainly:** a small local model finishing a whole task through this door. Measured and driven on this release: a stock 1.5B behind llama.cpp with a 4,096-token context the server enforces, against a real PVE node, read-only. Its calls landed and the door's refusals named the fix each time (an invented field, the real ones listed); the prompt peaked at 3,074 tokens; the model did not finish the task, it invented a number. The window holds; a 1.5B does not. *Hardware*-watchdog fencing (needs physical iTCO/IPMI), and behavior at production scale. The 20 held addresses are never fired: refused by sentence, by design, not a gap.

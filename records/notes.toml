@@ -1,0 +1,27 @@
+# PLAN's notes: a consequence the tier cannot say, shown by the plan when the call's own arguments
+# meet a line's condition, and kept on the executing receipt.
+#
+# A note is advice. It gates nothing: the tier is the one authored column that decides, and a
+# note never changes `allowed`, `reason` or `needs`. Its condition is a closed vocabulary of two,
+# read from the arguments alone (never a read of the target, so a plan is never quieter for
+# knowing less): `given` (each name present: a boolean read through the words `coerce_args` sends
+# the vendor, any other value given unless blank) and `not_given` (each name absent or false).
+# Only a definite answer silences a note: a value that cannot be told before the wire shows it.
+# A line is keyed on the ADDRESS, like every record, and carries `says` (what the plan prints)
+# and `why` (the judgement, quoting the vendor). The build
+# refuses a line on an address that is not a served mutation, a note without exactly those four
+# keys (an empty side is written `[]`), a name the address does not publish or the path binds, a
+# name twice or on both sides, an empty condition, a sentence under four words or with space
+# around it, or two notes with one condition.
+#
+# Why notes and not defaults: 0.44.2 sent `unique=1` on a restore unless it judged the restore in
+# place, by parsing the archive's volid for its source VMID. That is a client changing what the
+# vendor's call does; the core shows what the call will do and leaves the call alone.
+# Opening a line is John's hand, by name.
+[note]
+"pve:POST /nodes/{node}/qemu" = [
+  { given = ["archive"], not_given = ["unique"], says = "this restore keeps the backup's MAC and SMBIOS UUID. Right for rebuilding the same guest in place; for a copy beside a guest that may still run, pass unique=1, or two guests share one identity on the network.", why = "Vendor: unique 'Assign a unique random ethernet address.' qemu-server restores netN and smbios1 from the archive unless unique is set. Measured on PVE 9.2.2: a restore to a new VMID without unique kept the source's MAC and SMBIOS UUID, unique=1 gave new ones (#82, #100). [Claude, 2026-10-24; John: approved]" },
+]
+"pve:POST /nodes/{node}/lxc" = [
+  { given = ["restore"], not_given = ["unique"], says = "this restore keeps the backup's MAC. Right for rebuilding the same container in place; for a copy, pass unique=1, or two containers share one address on the network.", why = "Vendor: unique 'Assign a unique random ethernet address.' The vendor's own sentence; not measured live for containers (QEMU was, #100). [Claude, 2026-10-24; John: approved]" },
+]

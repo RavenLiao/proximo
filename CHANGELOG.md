@@ -2,6 +2,20 @@
 
 All notable changes to Proximo. Format loosely follows Keep a Changelog; versions are SemVer.
 
+## [0.48.0] — 2026-10-25
+
+**A restore says what identity it keeps.** A minor: a new authored record and a new plan key (door contract 2). No verdict moves, and nothing Proximo sends the vendor changes.
+
+**Said, not defaulted: what #82 asked for, which the 0.45 cut lost.** The call is unchanged: a restore without `unique` still gives the copy the backup's identity, as Proxmox does; the plan now says so before it runs. Issue #100, from the reporter of #82: 0.44.2's fix for #82 (a restored copy wore the original's MAC and SMBIOS UUID) lived in `pve_restore`, and the 0.45.0 cut removed it with the other wrappers without naming it. Measured again on a PVE 9.2.2 lab node through the shell door: a QEMU restore to a new VMID without `unique` came back with the source's MAC and SMBIOS UUID, and its plan said nothing about either; with `unique=1` both were new.
+
+**New: plan notes.** `records/notes.toml` holds consequences the tier cannot say, keyed on the address like every record: a condition read from the call's own arguments (`given`, `not_given`; a boolean read through the same words `coerce_args` sends the vendor, a string given unless blank), what the plan says, and why. Only a definite answer silences a note: a value that cannot be told before the wire (a boolean of `2`, a list, a word nobody reads as a boolean) shows it. A plan whose arguments meet a line carries `notes: [{says, why}]`, and the receipt's `executing` row carries the same sentences under `notes`. A note never reads the target and never changes a verdict: it shows the same armed, unarmed, with no credential or with the target's read refused, and the tier still decides. Two lines ship: a QEMU restore (`archive`) without `unique` says it keeps the backup's MAC and SMBIOS UUID, a container restore (`restore`) without `unique` says it keeps the backup's MAC; each says it is right for a rebuild in place and that a copy wants `unique=1`. Proximo does not send `unique` for you: 0.44.2 did, by parsing the archive's name for its source VMID, and the core does not change what the vendor's call does. The build refuses a note on an address that is not a served mutation, a name the address does not publish or names on both sides, an empty condition, or a missing sentence; and a name twice, a name the path binds, a sentence with space around it, or two notes with one condition; the loader refuses a file carrying a note the build would not write.
+
+**The door is door contract 2.** The plan answer gains `notes` (a list of `says` and `why`), present only when a note holds; `docs/door-contract.json` samples a restore so the key is part of the contract. Nothing else in the door moved.
+
+**Proved live.** On a PVE 9.2.2 lab node through the shell door: the restore without `unique` kept the source's MAC and SMBIOS UUID and its plan and receipt carried the note; `unique=1` gave new ones and carried none. The container line rests on the vendor's sentence; the lab had no container template to restore. Two adversarial lenses went over the branch: the first found the plan reading `unique=n` as given while the vendor was sent false (the note silent on exactly the call it exists for); one boolean reader now serves both, and a test sends every spelling through the plan and the receipt and holds them to one answer.
+
+**1,964 tests** on Python 3.12 and 3.13; the mcp 1.x leg runs 1,962 and skips the two 2.x-only seams.
+
 ## [0.47.0] — 2026-10-24
 
 **Self-owned grants refused; a stdlib ledger checker.** A minor: it refuses consent grants that worked before, adds an opt-in for one-user boxes, and adds a checker and a written ledger format.

@@ -1,3 +1,15 @@
+proximo (0.48.0-1) UNRELEASED; urgency=medium
+
+  * Track upstream 0.48.0 (minor: a restore says what identity it keeps.
+    records/notes.toml holds plan notes, keyed on the address: a condition
+    read from the call's own arguments and a sentence the plan shows and the
+    executing receipt keeps. A QEMU restore without unique keeps the
+    backup's MAC and SMBIOS UUID, a container restore its MAC; the plan now
+    says so. A note never changes a verdict, and nothing Proximo sends
+    the vendor changes. Door contract 2. 1,964 tests.)
+
+ -- John Broadway <271895126+john-broadway@users.noreply.github.com>  Sun, 25 Oct 2026 00:30:00 +0000
+
 proximo (0.47.0-1) UNRELEASED; urgency=medium
 
   * Track upstream 0.47.0 (minor: a consent grant owned by the agent's own

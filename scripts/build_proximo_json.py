@@ -3,7 +3,7 @@
 
     records/vendor.json.gz   the vendor's addresses, generated (scripts/build_governance_table.py)
     records/*.toml           the authored judgments: tiers, taint, secrets, undo creates, shell rows,
-                             DIAGNOSE's battery, find's vocabulary
+                             DIAGNOSE's battery, find's vocabulary, PLAN's notes
               |
               v
     src/proximo/core/proximo.json.gz   the one file the engine reads
@@ -36,7 +36,7 @@ from typing import Any
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from proximo.core import diagnose, engine, rawdoor, search, shell  # noqa: E402
+from proximo.core import apitree, diagnose, engine, rawdoor, search, shell  # noqa: E402
 from proximo.core.engine import MUTATE, READ, TIERS, placeholders  # noqa: E402
 from proximo.core.errors import ProximoError  # noqa: E402
 
@@ -45,7 +45,8 @@ VENDOR = RECORDS / "vendor.json.gz"
 OUT = ROOT / "src" / "proximo" / "core" / "proximo.json.gz"
 SCHEMA = 1
 #: The authored inputs, by the name their refusals use.
-AUTHORED = ("tiers.toml", "taint.toml", "secrets.toml", "undo.toml", "shell.toml", "diagnose.toml", "vocab.toml")
+AUTHORED = ("tiers.toml", "taint.toml", "secrets.toml", "undo.toml", "shell.toml", "diagnose.toml", "vocab.toml",
+            "notes.toml")
 
 
 def family(path: str) -> str:
@@ -375,6 +376,30 @@ def creates(text: str | None, rows: dict[tuple[str, str, str], dict]) -> dict[st
     return out
 
 
+def notes(text: str | None, rows: dict[tuple[str, str, str], dict]) -> dict[str, list[dict]]:
+    """`notes.toml`'s `[note]` table: per address, the consequences the plan prints when the call's
+    own arguments meet a line's condition (`given`, `not_given`), each with what it says and why.
+    A note is advice and gates nothing; a line that could never show, or could show a name the
+    address does not take, is refused here in the words the loader uses (`apitree.note_problem`).
+    Absent file = no notes."""
+    parsed = _toml("notes.toml", text).get("note", {})
+    if not isinstance(parsed, dict):
+        raise ProximoError("notes.toml: `note` names the [note] table")
+    out: dict[str, list[dict]] = {}
+    for key, value in parsed.items():
+        product, _, address = key.partition(":")
+        method, _, path = address.partition(" ")
+        row = rows.get((product, method, path))
+        if row is None or row["excluded"]:
+            raise ProximoError(f"notes.toml: note line {key!r} matches no published address")
+        if not isinstance(value, list) or not value:
+            raise ProximoError(f"notes.toml: note line {key!r} is not a list of notes")
+        if wrong := apitree.notes_problem(value, row):
+            raise ProximoError(f"notes.toml: note line {key!r} {wrong}")
+        out[key] = [{k: n[k] for k in apitree.NOTE_KEYS} for n in value]
+    return out
+
+
 def battery(text: str | None) -> list[dict[str, Any]]:
     """`records/diagnose.toml` as the one JSON's `diagnose` list: a subject per entry (`key`, `is`,
     `shell`), its probes a list (`name` first), so the authored order rides through sorted keys.
@@ -506,8 +531,10 @@ def build(vendor: list[dict], texts: dict[str, str | None]) -> dict[str, Any]:
             **reads_of(r, index))
     refuse_bad_net(rows, index)
     made = creates(texts.get("undo.toml"), index)
+    said = notes(texts.get("notes.toml"), index)
     for r in rows:
         r["creates"] = made.get(f'{r["product"]}:{r["method"]} {r["path"]}')
+        r["notes"] = said.get(f'{r["product"]}:{r["method"]} {r["path"]}', [])
     judged = {key: engine.row_of(r) for key, r in index.items()}
     refuse_inert_keys(judged, tier)
     refuse_inert_untrusted(judged, taint)

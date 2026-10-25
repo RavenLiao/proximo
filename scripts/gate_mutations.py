@@ -34,6 +34,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 E = "src/proximo/core/engine.py"
 L = "src/proximo/core/ledger.py"
 SP = "src/proximo/core/spine.py"
+AT = "src/proximo/core/apitree.py"
 
 #: (name, file, the gate as written, the gate neutered)
 M = [
@@ -155,6 +156,34 @@ M = [
     ('M33-CONSENT-ONE-STAT', SP,
      '    try:\n        os.makedirs(os.path.join(spent_dir, SPENT_DIR)',
      '    try:\n        st = os.lstat(grant_path(cid) or "")\n        os.makedirs(os.path.join(spent_dir, SPENT_DIR)'),
+    # PLAN's notes (notes.toml, #100): the plan shows them, the receipt keeps them, the loader holds them
+    ('M37-NOTE-PLAN', E,
+     '    if held := notes_held(row, args):\n        out["notes"] = held',
+     '    if False:\n        out["notes"] = held'),
+    ('M38-NOTE-RECEIPT', E,
+     '               **({"notes": [n["says"] for n in held]} if held else {}),\n',
+     ''),
+    ('M39-NOTE-NOT-GIVEN', E,
+     '            and not any(_given(row, k, args) is True for k in n["not_given"])]',
+     '            ]'),
+    ('M40-NOTE-GIVEN', E,
+     'if not any(_given(row, k, args) is False for k in n["given"])',
+     'if True'),
+    ('M41-NOTE-BOOL-WORD', E,
+     '    return True if lowered in TRUE_WORDS else False if lowered in FALSE_WORDS else None',
+     '    return True if lowered in TRUE_WORDS else None'),
+    ('M43-NOTE-BOOLEAN-KIND', E,
+     '        return not (isinstance(value, str) and not value.strip())    # a value is given unless blank',
+     '        return None'),
+    ('M44-NOTE-STRIP', E,
+     '    lowered = value.strip().lower()\n    return True if',
+     '    lowered = value.lower()\n    return True if'),
+    ('M45-NOTE-EACH-GIVEN', E,
+     'if not any(_given(row, k, args) is False for k in n["given"])',
+     'if not all(_given(row, k, args) is False for k in n["given"])'),
+    ('M42-NOTE-LOADER', AT,
+     '    if wrong := notes_problem(r["notes"], r):\n',
+     '    if wrong := None:\n'),
 ]
 
 #: The round's test set: the whole suite. Until the cut (2026-10-18) this was a hand-kept list of
