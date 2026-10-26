@@ -2,6 +2,13 @@
 
 All notable changes to Proximo. Format loosely follows Keep a Changelog; versions are SemVer.
 
+## [Unreleased]
+
+**Route PVE shell rows by target and node.** A named PVE target may map concrete path node names to
+OpenSSH destinations. The existing five SSH rows use that mapping for plan checks, execution and
+diagnosis; missing routes refuse before consent, rate reservation and snapshots. The default box
+continues to use `PROXIMO_SSH_TARGET`, and the remote hostname guard still runs before `pct`.
+
 ## [0.48.1] — 2026-10-25
 
 **Pool tokens read their pool; what a clone needs.** Issue #100 findings 2 and 3, measured again on a PVE 9.2.2 lab node. A patch: `mint`'s printed recipe and SETUP; the engine, the data file and the door are unchanged.

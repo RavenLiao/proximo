@@ -318,6 +318,7 @@ def plan(row: Row, args: dict[str, Any] | None = None, path: str | None = None,
     """
     args = dict(args or {})
     verdict = govern(row, cfg=cfg, path=path, args=args, ledger_cfg=ledger_cfg)
+    route_refused = False
     if path and "{" not in path and row.access != READ and (verdict.allowed or verdict.needs in ("arm", "consent")):
         # (a tunnel, a gate, a wall keeps its own words: those refusals name what no argument
         # can fix, lens 12)
@@ -327,6 +328,13 @@ def plan(row: Row, args: dict[str, Any] | None = None, path: str | None = None,
         # thing the caller can fix without an operator.
         if (twice := _given_twice(row, bind(row, path), args)) is not None:
             verdict = Verdict(False, twice, "arguments", consent_id=verdict.consent_id)
+    if (row.wire == "ssh" and path and "{" not in path
+            and (verdict.allowed or verdict.needs in ("arm", "consent"))):
+        try:
+            shell.resolve_target(cfg, rawdoor.canonical(path))
+        except ProximoError as exc:
+            verdict = Verdict(False, str(exc), "config", consent_id=verdict.consent_id)
+            route_refused = True
     out = {
         "address": row.address, "plane": row.product, "access": row.access, "tier": row.tier,
         "why": row.why, "untrusted": row.untrusted, "channel": row.channel,
@@ -354,7 +362,7 @@ def plan(row: Row, args: dict[str, Any] | None = None, path: str | None = None,
                               "the command is not run"}
     # A HELD address is never read for its live state: the plan's answer is the sentence, and a
     # read of its twin (a login's GET) would dial the vendor for a call that will not run.
-    if row.access != READ and verdict.needs not in ("arguments", "held"):
+    if row.access != READ and verdict.needs not in ("arguments", "held") and not route_refused:
         out.update(_live_state(row, args, path, cfg, ledger_cfg, env))
     if row.lane == "download" and verdict.allowed:
         # where the bytes would land; nothing is dialled, and a refused lane learns no path (lens 3)
@@ -741,11 +749,11 @@ def _built_client(row: Row, cfg: wire.Plane | None, ledger_cfg: Any, called: str
     """`_client`, with a build that fails (a missing or conflicting variable, a secret file
     group or other can read) receipted as a refusal naming what is wrong, never its content."""
     try:
-        return shell.client(cfg) if row.wire == "ssh" else _client(row.product, cfg)
+        return shell.client(cfg, path=called) if row.wire == "ssh" else _client(row.product, cfg)
     except Exception as exc:
         reason = f"{row.product} is not configured to be called: {safe_exception_text(exc, paths=True)}"
         _record(ledger_cfg, "core.refuse", row, outcome="refused",
-                detail={"reason": reason, "needs": "config", **wire_error(exc)},
+                detail={"reason": reason, "needs": "config", "called_path": called, **wire_error(exc)},
                 called=called, remote=remote)
         raise ProximoError(reason) from exc
 
